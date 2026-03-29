@@ -1,0 +1,34 @@
+name: Daily Gold Scrape
+
+on:
+  schedule:
+    - cron: '0 21 * * *' # This runs every day at 9:00 PM UTC
+  workflow_dispatch:      # This lets you run it manually to test
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write    # Crucial: allows the robot to save the CSV
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install tools
+        run: pip install -r requirements.txt
+
+      - name: Run the script
+        run: python main.py
+
+      - name: Save the data back to GitHub
+        run: |
+          git config --global user.name 'GoldBot'
+          git config --global user.email 'bot@github.com'
+          git add gold_data.csv
+          git commit -m "Update daily gold data" || echo "No changes to commit"
+          git push
