@@ -6,86 +6,57 @@ import os
 import sys
 
 def get_market_data():
-    print("--- 🤖 Robot Starting: Gold Data Fetch 🤖 ---")
-    
-    # We create a template for the data row
+    print("--- 🎯 Precision Search: Starting ---")
+    # Clean column names for a clean CSV
     entry = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "gold_price": 0.0,
         "dxy_index": 0.0,
         "poly_prob": 0.0,
-        "market_name": "Search Failed"
+        "market_name": "No Market Found"
     }
 
-    # 1. Fetch Finance Data (Looking back 5 days to handle Sunday/Weekends)
+    # 1. Fetch Finance Data
     try:
-        print("📡 Connecting to Yahoo Finance...")
-        # GC=F is Gold, DX-Y.NYB is the US Dollar Index
-        gold_data = yf.Ticker("GC=F").history(period="5d")
-        dxy_data = yf.Ticker("DX-Y.NYB").history(period="5d")
+        gold = yf.Ticker("GC=F").history(period="5d")['Close'].iloc[-1]
+        dxy = yf.Ticker("DX-Y.NYB").history(period="5d")['Close'].iloc[-1]
+        entry["gold_price"], entry["dxy_index"] = round(gold, 2), round(dxy, 2)
+        print(f"Finance: Gold ${entry['gold_price']} | DXY {entry['dxy_index']}")
+    except:
+        print("!! Finance Data Failed")
 
-        if not gold_data.empty:
-            entry["gold_price"] = round(gold_data['Close'].iloc[-1], 2)
-            entry["dxy_index"] = round(dxy_data['Close'].iloc[-1], 2)
-            print(f"✅ Finance Success: Gold ${entry['gold_price']} | DXY {entry['dxy_index']}")
-    except Exception as e:
-        print(f"❌ Finance Error: {e}")
-
-    # 2. Fetch Polymarket Sentiment (Surgical Search for XAUUSD)
+    # 2. Fetch Polymarket (The Fuzzy Hunter)
     try:
-        print("📡 Connecting to Polymarket API...")
-        # We search specifically for the 'XAUUSD' keyword from your link
-        url = "https://gamma-api.polymarket.com/events?active=true&closed=false&q=XAUUSD"
-        response = requests.get(url).json()
+        # We search for 'Gold' generally and filter manually in Python
+        url = "https://gamma-api.polymarket.com/events?active=true&closed=false&q=Gold"
+        resp = requests.get(url).json()
         
-        found_market = False
-        for event in response:
+        for event in resp:
             title = event.get('title', '').upper()
-            
-            # We filter for the specific Gold market, ignoring Bitcoin
-            if "XAUUSD" in title or "GOLD" in title:
+            # We look for the "Up or Down" style market specifically
+            if "UP OR DOWN" in title and ("XAU" in title or "GOLD" in title):
                 market = event['markets'][0]
-                
-                # Get the "Up" price (probability)
-                # Polymarket returns a list like [0.68, 0.32]
-                prices = market.get('outcomePrices', [0.5, 0.5])
-                
-                # We turn '0.68' into 68.0
+                prices = market.get('outcomePrices', ["0.5"])
                 entry["poly_prob"] = round(float(prices[0]) * 100, 2)
-                entry["market_name"] = market.get('question', 'Gold Daily Trend')
-                found_market = True
-                print(f"✅ Polymarket Success: '{entry['market_name']}' is at {entry['poly_prob']}%")
+                entry["market_name"] = title
+                print(f"✅ Found Match: {title} at {entry['poly_prob']}%")
                 break
-        
-        if not found_market:
-            print("⚠️ No matching XAUUSD market found. Using 50% neutral default.")
-            entry["poly_prob"] = 50.0
-            entry["market_name"] = "No Active Market"
-
-    except Exception as e:
-        print(f"❌ Polymarket Error: {e}")
+    except:
+        print("!! Polymarket Search Failed")
 
     return entry
 
-# --- Execution & Saving ---
-data_point = get_market_data()
+# --- Save Logic ---
+new_row = get_market_data()
+file = "gold_data.csv"
+df_new = pd.DataFrame([new_row])
 
-if data_point:
-    file_name = "gold_data.csv"
-    df_new = pd.DataFrame([data_point])
-    
-    # If the file already exists, we append to it
-    if os.path.exists(file_name):
-        df_old = pd.read_csv(file_name)
-        # Combine old and new, and remove any duplicate dates
-        df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['date'], keep='last').tail(30)
-    else:
-        # If it's the first time, just use the new data
-        df_combined = df_new
-        
-    # Save back to CSV
-    df_combined.to_csv(file_name, index=False)
-    print(f"🎉 SUCCESS: {file_name} has been updated and saved.")
+if os.path.exists(file):
+    df_old = pd.read_csv(file)
+    # Keep it clean: Merge and remove duplicate dates
+    df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['date'], keep='last').tail(30)
 else:
-    print("❌ FATAL: Robot could not generate data.")
-    sys.exit(1)
+    df_combined = df_new
+
+df_combined.to_csv(file, index=False)
+print("--- 🏁 Robot Task Finished ---")
