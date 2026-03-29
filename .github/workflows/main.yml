@@ -2,23 +2,19 @@ name: Daily Gold Scrape
 
 on:
   schedule:
-    - cron: '0 21 * * *'
-  workflow_dispatch:
+    - cron: '0 21 * * *' # Runs at 9pm UTC daily
+  workflow_dispatch:      # Allows you to run it manually
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # THIS BLOCK BELOW IS THE MAGIC KEY TO FIX ERROR 128
+    # THIS BLOCK BELOW FIXES ERROR 128
     permissions:
       contents: write
-      pull-requests: write
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          # This ensures the robot uses a fresh "Key"
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,8 +32,7 @@ jobs:
           git config --global user.name 'GoldBot'
           git config --global user.email 'bot@github.com'
           git add gold_data.csv
-          # This 'fetch' and 'rebase' makes sure the robot is in sync
-          git fetch origin main
+          # 'pull --rebase' ensures the robot stays in sync with your manual edits
           git pull --rebase origin main
-          git commit -m "Update daily gold data" || echo "No changes to commit"
+          git commit -m "Update daily gold data" || echo "No changes"
           git push origin main
