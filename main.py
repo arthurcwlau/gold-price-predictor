@@ -19,6 +19,7 @@ def get_market_data():
     last_dxy = round(dxy_hist['Close'].iloc[-1], 2)
 
     # 2. Fetch Polymarket (The "Sentiment" Oracle)
+      # Use a very broad search for Gold/XAU
     url = "https://gamma-api.polymarket.com/events?active=true&closed=false&q=Gold"
     resp = requests.get(url).json()
     
@@ -26,8 +27,11 @@ def get_market_data():
     q_text = "No active market"
     
     if resp:
+        # Look for 'XAUUSD' or 'GOLD'
         for event in resp:
             title = event.get('title', '').upper()
+            if ("GOLD" in title or "XAUUSD" in title) and "BITCOIN" not in title:
+                    
             if "GOLD" in title and "BITCOIN" not in title:
                 market = event['markets'][0]
                 # Prices are returned as a list like [0.65, 0.35]
