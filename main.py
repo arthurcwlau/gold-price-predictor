@@ -3,75 +3,63 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 import os
-import sys
 import json
 
-def get_market_data():
-    print("--- 🎯 Surgical Strike: Target XAUUSD 🎯 ---")
+def get_pro_metrics():
+    print("--- 🧠 AI-Predictor: Pro Data Collection ---")
     
-    # FIX: This must be the hyphenated version from the URL
-    TARGET_SLUG = "xauusd-up-or-down-on-march-30-2026"
-    
-    entry = {
-        "date": datetime.now().strftime("%Y-%m-%d"),
-        "gold_price": 0.0,
-        "dxy_index": 0.0,
-        "poly_prob": 0.0,
-        "market_name": "No Data Found"
-    }
+    # Targeting the specific slug from your link
+    SLUG = "xauusd-up-or-down-on-march-30-2026"
+    entry = {"date": datetime.now().strftime("%Y-%m-%d"), "gold": 0, "dxy": 0, "prob": 0, "spread": 0, "fed_cut": 0}
 
-    # 1. Fetch Finance Data
+    # 1. Macro Data
     try:
         gold = yf.Ticker("GC=F").history(period="5d")['Close'].iloc[-1]
         dxy = yf.Ticker("DX-Y.NYB").history(period="5d")['Close'].iloc[-1]
-        entry["gold_price"], entry["dxy_index"] = round(gold, 2), round(dxy, 2)
-        print(f"✅ Finance: Gold ${entry['gold_price']} | DXY {entry['dxy_index']}")
-    except:
-        print("!! Finance Data Failed")
+        entry["gold"], entry["dxy"] = round(gold, 2), round(dxy, 2)
+    except: print("!! Macro Fetch Failed")
 
-    # 2. Fetch Polymarket (Direct Slug Method)
+    # 2. Polymarket Gamma + CLOB (Conviction Logic)
     try:
-        url = f"https://gamma-api.polymarket.com/events?slug={TARGET_SLUG}"
-        resp = requests.get(url).json()
-        
-        if resp and len(resp) > 0:
-            event = resp[0]
-            market = event['markets'][0]
+        # Get Market Details
+        market_resp = requests.get(f"https://gamma-api.polymarket.com/events?slug={SLUG}").json()
+        if market_resp:
+            market = market_resp[0]['markets'][0]
+            yes_token = market['clobTokenIds'][0] # The "UP" Token
             
-            # THE FIX: Safely turn the string '["0.49", "0.51"]' into a real number
-            raw_prices = market.get('outcomePrices')
-            if isinstance(raw_prices, str):
-                prices = json.loads(raw_prices)
-            else:
-                prices = raw_prices
+            # Get Current Prob from Gamma
+            prices = json.loads(market['outcomePrices'])
+            entry["prob"] = round(float(prices[0]) * 100, 2)
+
+            # Get CLOB Spread (The "Conviction" Metric)
+            # This is a public endpoint discussed in the article
+            book_url = f"https://clob.polymarket.com/book?token_id={yes_token}"
+            book = requests.get(book_url).json()
             
-            # prices[0] is 'Up' / 'Yes'
-            entry["poly_prob"] = round(float(prices[0]) * 100, 2)
-            entry["market_name"] = event.get('title')
-            print(f"🚀 SUCCESS: {entry['market_name']} is {entry['poly_prob']}%")
-        else:
-            print(f"⚠️ Slug '{TARGET_SLUG}' not found. Checking search backup...")
-            # Backup Search
-            backup = requests.get("https://gamma-api.polymarket.com/events?active=true&q=XAUUSD").json()
-            for e in backup:
-                if "XAUUSD" in e['title'].upper():
-                    entry["poly_prob"] = round(float(json.loads(e['markets'][0]['outcomePrices'])[0]) * 100, 2)
-                    entry["market_name"] = e['title']
-                    break
+            if book.get('bids') and book.get('asks'):
+                best_bid = float(book['bids'][0]['price'])
+                best_ask = float(book['asks'][0]['price'])
+                entry["spread"] = round(best_ask - best_bid, 4)
+                print(f"✅ Pro Success: Spread is {entry['spread']}")
+
+        # 3. Fed Sentiment (Bonus Predictor for AI)
+        fed_url = "https://gamma-api.polymarket.com/events?active=true&q=Fed%20Rate%20Cut"
+        fed_resp = requests.get(fed_url).json()
+        if fed_resp:
+            entry["fed_cut"] = round(float(json.loads(fed_resp[0]['markets'][0]['outcomePrices'])[0]) * 100, 2)
 
     except Exception as e:
-        print(f"!! Polymarket Error: {e}")
+        print(f"!! Pro Fetch Error: {e}")
 
     return entry
 
-# --- Execution & Saving ---
-new_row = get_market_data()
-file = "gold_data.csv"
-df_new = pd.DataFrame([new_row])
+# --- Save Routine ---
+row = get_pro_metrics()
+file = "gold_pro_data.csv"
+df_new = pd.DataFrame([row])
 
 if os.path.exists(file):
     df_old = pd.read_csv(file)
-    # Merges data, cleans duplicates, and keeps 30 days of history
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['date'], keep='last').tail(30)
 else:
     df_combined = df_new
