@@ -13,10 +13,8 @@ def get_data():
         "market_name": "N/A"
     }
 
-    # 1. Fetch Finance Data (with error handling)
+    # 1. Fetch Finance Data
     try:
-        print("Fetching Yahoo Finance data...")
-        # Get Gold (GC=F) and Dollar Index (DX-Y.NYB)
         gold = yf.Ticker("GC=F").history(period="1d")['Close'].iloc[-1]
         dxy = yf.Ticker("DX-Y.NYB").history(period="1d")['Close'].iloc[-1]
         data_point["gold_price"] = round(gold, 2)
@@ -24,17 +22,21 @@ def get_data():
     except Exception as e:
         print(f"Finance Error: {e}")
 
-    # 2. Fetch Polymarket Data (with error handling)
+    # 2. Fetch ONLY Gold (GC) Polymarket Data
     try:
-        print("Fetching Polymarket data...")
         url = "https://gamma-api.polymarket.com/events?active=true&closed=false&q=Gold"
-        response = requests.get(url).json()
-        if response and len(response) > 0:
-            market = response[0]['markets'][0]
-            data_point["poly_up_prob"] = float(market['outcomePrices'][0]) * 100
-            data_point["market_name"] = market['question']
-        else:
-            print("No active Gold markets found on Polymarket right now.")
+        events = requests.get(url).json()
+        
+        # We loop through events to find the real Gold (GC) market
+        for event in events:
+            title = event.get('title', '').upper()
+            if "GOLD (GC)" in title: # This filters out Bitcoin/MicroStrategy!
+                market = event['markets'][0]
+                # Price is usually the first item in outcomePrices
+                prob = float(market['outcomePrices'][0]) * 100
+                data_point["poly_up_prob"] = round(prob, 2)
+                data_point["market_name"] = market['question']
+                break 
     except Exception as e:
         print(f"Polymarket Error: {e}")
 
