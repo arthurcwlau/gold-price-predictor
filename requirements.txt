@@ -1,5 +1,3 @@
 requests
 pandas
-requests
-pandas
-yfinance
+yfinance>=0.2.63
