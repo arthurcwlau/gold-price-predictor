@@ -9,7 +9,7 @@ def get_market_data():
     print("--- 🎯 Surgical Strike: Target XAUUSD 🎯 ---")
     
     # This is the exact identifier for the market in your link
-    TARGET_SLUG = "xauusd-up-or-down-on-march-30-2026"
+    TARGET_SLUG = "Gold (XAUUSD) Up or Down on March 30?"
     
     entry = {
         "date": datetime.now().strftime("%Y-%m-%d"),
