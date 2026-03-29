@@ -9,12 +9,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # This gives the robot the "Key"
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches the full history to avoid sync errors
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -24,12 +24,12 @@ jobs:
       - name: Install tools
         run: pip install requests pandas yfinance
 
-      - name: Run the script
+      - name: Run script
         run: python main.py
 
-      # This tool is the "Traffic Cop" that fixes the Exit Code 128
-      - name: Auto-Save Data
+      - name: Auto-Save Pro Data
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update daily gold data [bot]"
-          file_pattern: 'gold_data.csv'
+          commit_message: "Update 2026 Gold Investment Pro Data"
+          # CRITICAL: This must match the filename in your Python script
+          file_pattern: 'gold_investment_pro.csv'
