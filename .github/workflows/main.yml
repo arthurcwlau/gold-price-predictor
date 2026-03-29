@@ -33,6 +33,8 @@ jobs:
         run: |
           git config --global user.name 'GoldBot'
           git config --global user.email 'bot@github.com'
-          git add gold_rolling_data.csv
+          git add gold_data.csv
+          # This line below is the magic fix! 
+          git pull --rebase origin main 
           git commit -m "Update daily gold data" || echo "No changes to commit"
           git push
