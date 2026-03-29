@@ -1,2 +1,2 @@
-date,gold_price,dxy_index,oil_wti,poly_gold_daily_up,fed_pivot_prob,gold_crash_june_prob,oil_shock_150_prob,oil_shock_200_prob
-2026-03-29,4524.3,100.15,99.64,46.5,1.75,13.45,26.5,13.5
+date,gold_price,dxy_index,oil_wti,gold_hit_8000_prob,gold_hit_7000_prob,gold_hit_6500_prob,gold_hit_6200_prob,gold_hit_6000_prob,gold_hit_5500_prob,gold_hit_5000_prob,gold_hit_4800_prob,gold_hit_4600_prob,gold_hit_4400_prob,gold_hit_4200_prob,gold_hit_3800_prob,gold_hit_3400_prob,gold_hit_5700_prob,gold_hit_8500_prob,gold_hit_9000_prob,gold_hit_10000_prob,fed_april_pivot_prob,oil_shock_↑ 150_prob,oil_shock_↑ 200_prob
+2026-03-29,4524.3,100.15,99.64,3.5,6.95,7.5,9.5,12.5,27.45,100.0,100.0,100.0,100.0,68.0,23.55,8.35,24.0,2.9,2.75,2.35,1.75,26.5,13.5
