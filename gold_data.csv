@@ -1,2 +1,2 @@
-date,gold_price,dxy,poly_prob,market
-2026-03-29,4524.3,100.15,0,Search Failed
+date,gold_price,dxy,poly_prob,market,dxy_index,market_name
+2026-03-29,4524.3,,50.0,,100.15,No Active Market
