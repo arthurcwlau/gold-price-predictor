@@ -4,22 +4,23 @@ import yfinance as yf
 from datetime import datetime
 import os
 import sys
+import json
 
 def get_market_data():
     print("--- 🎯 Surgical Strike: Target XAUUSD 🎯 ---")
     
-    # This is the exact identifier for the market in your link
-    TARGET_SLUG = "Gold (XAUUSD) Up or Down on March 30?"
+    # FIX: This must be the hyphenated version from the URL
+    TARGET_SLUG = "xauusd-up-or-down-on-march-30-2026"
     
     entry = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "gold_price": 0.0,
         "dxy_index": 0.0,
         "poly_prob": 0.0,
-        "market_name": "Target Found"
+        "market_name": "No Data Found"
     }
 
-    # 1. Fetch Finance Data (Standard Weekend-Safe)
+    # 1. Fetch Finance Data
     try:
         gold = yf.Ticker("GC=F").history(period="5d")['Close'].iloc[-1]
         dxy = yf.Ticker("DX-Y.NYB").history(period="5d")['Close'].iloc[-1]
@@ -30,7 +31,6 @@ def get_market_data():
 
     # 2. Fetch Polymarket (Direct Slug Method)
     try:
-        # We query for the specific slug you shared
         url = f"https://gamma-api.polymarket.com/events?slug={TARGET_SLUG}"
         resp = requests.get(url).json()
         
@@ -38,21 +38,24 @@ def get_market_data():
             event = resp[0]
             market = event['markets'][0]
             
-            # Polymarket prices can be list or string in 2026
-            prices = market.get('outcomePrices', ["0.5"])
+            # THE FIX: Safely turn the string '["0.49", "0.51"]' into a real number
+            raw_prices = market.get('outcomePrices')
+            if isinstance(raw_prices, str):
+                prices = json.loads(raw_prices)
+            else:
+                prices = raw_prices
             
-            # The prices are usually strings, we turn them into numbers
+            # prices[0] is 'Up' / 'Yes'
             entry["poly_prob"] = round(float(prices[0]) * 100, 2)
-            entry["market_name"] = event.get('title', 'Gold Daily Trend')
-            print(f"🚀 SUCCESS: {entry['market_name']} at {entry['poly_prob']}%")
+            entry["market_name"] = event.get('title')
+            print(f"🚀 SUCCESS: {entry['market_name']} is {entry['poly_prob']}%")
         else:
-            print(f"⚠️ Slug {TARGET_SLUG} not found. Checking active markets...")
-            # Backup: search specifically for 'XAUUSD'
-            backup_url = "https://gamma-api.polymarket.com/events?active=true&q=XAUUSD"
-            backup_resp = requests.get(backup_url).json()
-            for e in backup_resp:
+            print(f"⚠️ Slug '{TARGET_SLUG}' not found. Checking search backup...")
+            # Backup Search
+            backup = requests.get("https://gamma-api.polymarket.com/events?active=true&q=XAUUSD").json()
+            for e in backup:
                 if "XAUUSD" in e['title'].upper():
-                    entry["poly_prob"] = round(float(e['markets'][0]['outcomePrices'][0]) * 100, 2)
+                    entry["poly_prob"] = round(float(json.loads(e['markets'][0]['outcomePrices'])[0]) * 100, 2)
                     entry["market_name"] = e['title']
                     break
 
@@ -61,13 +64,14 @@ def get_market_data():
 
     return entry
 
-# --- Execution ---
+# --- Execution & Saving ---
 new_row = get_market_data()
 file = "gold_data.csv"
 df_new = pd.DataFrame([new_row])
 
 if os.path.exists(file):
     df_old = pd.read_csv(file)
+    # Merges data, cleans duplicates, and keeps 30 days of history
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['date'], keep='last').tail(30)
 else:
     df_combined = df_new
