@@ -3,6 +3,20 @@ import pandas as pd
 from datetime import datetime
 import os
 
+# Add this near the top of main.py
+def get_actual_gold_price():
+    # Using a simple public price API for Gold Spot (XAU)
+    res = requests.get("https://api.accessprecision.com/v1/gold_spot").json() 
+    return res['price']
+
+# When saving to CSV, add the actual price:
+new_data = pd.DataFrame([{
+    "date": datetime.now().strftime("%Y-%m-%d"),
+    "market": title,
+    "poly_prob": prob,
+    "actual_price": get_actual_gold_price()
+}])
+
 # 1. Ask Polymarket for Gold Markets
 url = "https://gamma-api.polymarket.com/events?active=true&closed=false&q=Gold"
 data = requests.get(url).json()
