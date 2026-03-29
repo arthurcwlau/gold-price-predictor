@@ -4,54 +4,45 @@ import yfinance as yf
 from datetime import datetime
 import os
 
-def get_data():
-    data_point = {
+def get_gold_data():
+    # 1. Fetch Actual Gold Price & Dollar Index
+    gold_price = yf.Ticker("GC=F").history(period="1d")['Close'].iloc[-1]
+    dxy_index = yf.Ticker("DX-Y.NYB").history(period="1d")['Close'].iloc[-1]
+
+    # 2. Fetch Polymarket Odds (Filtering for GC Gold)
+    # We use a very specific query for Gold Commodities
+    url = "https://gamma-api.polymarket.com/events?active=true&closed=false&q=Gold%20Price"
+    resp = requests.get(url).json()
+    
+    prob = 0
+    q_text = "No Gold Market Found"
+    
+    for event in resp:
+        # We only want markets about the "GC" (Gold) or "Gold Price"
+        if "GOLD" in event['title'].upper() and "BITCOIN" not in event['title'].upper():
+            market = event['markets'][0]
+            prob = float(market['outcomePrices'][0]) * 100
+            q_text = market['question']
+            break
+
+    return {
         "date": datetime.now().strftime("%Y-%m-%d"),
-        "gold_price": 0,
-        "dxy_index": 0,
-        "poly_up_prob": 0,
-        "market_name": "N/A"
+        "actual_gold": round(gold_price, 2),
+        "dxy": round(dxy_index, 2),
+        "poly_prob": round(prob, 2),
+        "market": q_text
     }
 
-    # 1. Fetch Finance Data
-    try:
-        gold = yf.Ticker("GC=F").history(period="1d")['Close'].iloc[-1]
-        dxy = yf.Ticker("DX-Y.NYB").history(period="1d")['Close'].iloc[-1]
-        data_point["gold_price"] = round(gold, 2)
-        data_point["dxy_index"] = round(dxy, 2)
-    except Exception as e:
-        print(f"Finance Error: {e}")
+# Run and Save
+row = get_gold_data()
+df_new = pd.DataFrame([row])
+file = "gold_data.csv"
 
-    # 2. Fetch ONLY Gold (GC) Polymarket Data
-    try:
-        url = "https://gamma-api.polymarket.com/events?active=true&closed=false&q=Gold"
-        events = requests.get(url).json()
-        
-        # We loop through events to find the real Gold (GC) market
-        for event in events:
-            title = event.get('title', '').upper()
-            if "GOLD (GC)" in title: # This filters out Bitcoin/MicroStrategy!
-                market = event['markets'][0]
-                # Price is usually the first item in outcomePrices
-                prob = float(market['outcomePrices'][0]) * 100
-                data_point["poly_up_prob"] = round(prob, 2)
-                data_point["market_name"] = market['question']
-                break 
-    except Exception as e:
-        print(f"Polymarket Error: {e}")
-
-    return data_point
-
-# --- Main Logic ---
-new_entry = get_data()
-df_new = pd.DataFrame([new_entry])
-
-file_name = "gold_rolling_data.csv"
-if os.path.exists(file_name):
-    df_old = pd.read_csv(file_name)
+if os.path.exists(file):
+    df_old = pd.read_csv(file)
     df_combined = pd.concat([df_old, df_new]).tail(30)
 else:
     df_combined = df_new
 
-df_combined.to_csv(file_name, index=False)
-print(f"Successfully saved data for {new_entry['date']}")
+df_combined.to_csv(file, index=False)
+print(f"Success! Recorded {row['market']} at {row['poly_prob']}%")
