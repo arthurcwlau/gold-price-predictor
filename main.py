@@ -5,83 +5,92 @@ from datetime import datetime
 import os
 import json
 
-def get_pro_investment_data():
-    print("--- 🏦 2026 Strategic Dashboard: Full-Curve Mode ---")
+def get_gold_alpha_data():
+    print("--- 🏦 2026 Gold Alpha Pipeline: Starting ---")
     
-    # EVENT SLUGS (Top-level categories)
-    OIL_EVENT = "cl-hit-jun-2026"
-    GOLD_JUNE_EVENT = "gc-settle-jun-2026"
-    GOLD_DAILY_EVENT = "xauusd-up-or-down-on-march-30-2026"
-    FED_EVENT = "fed-rate-cut-by-629"
+    # SLUGS - Targeted for high predictive value
+    SLUGS = {
+        "gold_daily": "xauusd-up-or-down-on-march-30-2026",
+        "fed_risk": "fed-rate-cut-by-629",
+        "gold_june": "gc-settle-jun-2026",
+        "oil_shock": "cl-hit-jun-2026"
+    }
     
+    # Baseline Entry
     entry = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "gold_price": 0.0, "dxy_index": 0.0, "oil_wti": 0.0,
-        "market_spread": 0.0
+        "market_conviction": 0.0 # Derived from spread
     }
 
-    # 1. Macro Data
+    # 1. Macro Pulse (Leading Indicators)
     try:
-        gold_h = yf.Ticker("GC=F").history(period="7d")
-        dxy_h = yf.Ticker("DX-Y.NYB").history(period="7d")
-        oil_h = yf.Ticker("CL=F").history(period="7d")
-        entry.update({
-            "gold_price": round(gold_h['Close'].iloc[-1], 2),
-            "dxy_index": round(dxy_h['Close'].iloc[-1], 2),
-            "oil_wti": round(oil_h['Close'].iloc[-1], 2)
-        })
-    except: print("!! Macro Data Fetch Failed")
+        # Weekend-safe fetching
+        gold = yf.Ticker("GC=F").history(period="7d")['Close'].iloc[-1]
+        dxy = yf.Ticker("DX-Y.NYB").history(period="7d")['Close'].iloc[-1]
+        oil = yf.Ticker("CL=F").history(period="7d")['Close'].iloc[-1]
+        entry.update({"gold_price": round(gold, 2), "dxy_index": round(dxy, 2), "oil_wti": round(oil, 2)})
+    except: print("!! Macro Fetch Failed")
 
-    # 2. Polymarket "Curve Crawler"
-    def crawl_event(slug, prefix):
-        results = {}
+    # 2. Polymarket "Alpha" Fetcher
+    def fetch_sentiment(slug):
         try:
-            url = f"https://gamma-api.polymarket.com/events?slug={slug}"
-            resp = requests.get(url).json()
-            if resp and len(resp) > 0:
-                markets = resp[0].get('markets', [])
-                for m in markets:
-                    # Clean the title (e.g. "↑ $200" -> "up_200")
-                    raw_title = m.get('groupItemTitle') or m.get('question')
-                    clean_title = raw_title.replace('↑', 'up').replace('↓', 'down').replace('$', '').replace('<', 'under').replace('>', 'over').strip()
-                    clean_title = clean_title.lower().replace(' ', '_').replace('-', '_')
-                    
-                    key = f"{prefix}_{clean_title}_prob"
-                    
-                    # Parse Price
-                    prices = m.get('outcomePrices')
-                    if isinstance(prices, str): prices = json.loads(prices)
-                    results[key] = round(float(prices[0]) * 100, 2)
-                    
-                    # Capture spread for the very first market as a proxy
-                    if prefix == "gold_daily" and "market_spread" not in entry:
-                        entry["market_spread"] = -1.0
-        except Exception as e: print(f"!! Error crawling {slug}: {e}")
-        return results
+            r = requests.get(f"https://gamma-api.polymarket.com/events?slug={slug}").json()
+            return r[0]['markets'] if r else []
+        except: return []
 
-    # Fetching all curves
-    entry.update(crawl_event(OIL_EVENT, "oil"))
-    entry.update(crawl_event(GOLD_JUNE_EVENT, "gold_june"))
-    entry.update(crawl_event(GOLD_DAILY_EVENT, "gold_daily"))
-    
-    # Special Fed Fetch (Focus on April)
-    fed_probs = crawl_event(FED_EVENT, "fed")
-    entry["fed_april_prob"] = fed_probs.get("fed_april_meeting_prob", 0.0)
+    # A. Gold Sentiment (Daily & Tail Risk)
+    gold_daily = fetch_sentiment(SLUGS["gold_daily"])
+    if gold_daily:
+        prices = json.loads(gold_daily[0]['outcomePrices']) if isinstance(gold_daily[0]['outcomePrices'], str) else gold_daily[0]['outcomePrices']
+        entry["poly_gold_daily_up"] = round(float(prices[0]) * 100, 2)
+        # Conviction Check: Low spread = Smart Money is present
+        try:
+            tid = gold_daily[0]['clobTokenIds'][0]
+            book = requests.get(f"https://clob.polymarket.com/book?token_id={tid}").json()
+            if book.get('bids') and book.get('asks'):
+                entry["market_conviction"] = round(float(book['asks'][0]['price']) - float(book['bids'][0]['price']), 4)
+        except: entry["market_conviction"] = -1.0
 
-    print(f"✅ Success: Retrieved {len(entry)} data points.")
+    # B. The June Crash Check (Tail Risk)
+    gold_june = fetch_sentiment(SLUGS["gold_june"])
+    for m in gold_june:
+        if "3800" in m.get('groupItemTitle', ''):
+            p = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
+            entry["gold_crash_june_prob"] = round(float(p[0]) * 100, 2)
+
+    # C. The Fed Pivot (Monetary Lead)
+    fed_markets = fetch_sentiment(SLUGS["fed_risk"])
+    for m in fed_markets:
+        if "APRIL" in m.get('groupItemTitle', '').upper():
+            p = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
+            entry["fed_pivot_prob"] = round(float(p[0]) * 100, 2)
+
+    # D. Oil Shock Curve (Geopolitical Lead)
+    oil_markets = fetch_sentiment(SLUGS["oil_shock"])
+    # We only keep the most predictive "Breakout" levels
+    targets = ["$120", "$150", "$200"]
+    for m in oil_markets:
+        title = m.get('groupItemTitle', '')
+        if any(t in title for t in targets):
+            clean_name = f"oil_shock_{title.replace('$', '').strip()}_prob"
+            p = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
+            entry[clean_name] = round(float(p[0]) * 100, 2)
+
+    print(f"✅ Success: Captured {len(entry)} High-Alpha data points.")
     return entry
 
-# --- Save & Rolling Log ---
-new_row = get_pro_investment_data()
+# --- Save & Rolling Strategy ---
+new_row = get_gold_alpha_data()
 file_name = "gold_investment_pro.csv"
 df_new = pd.DataFrame([new_row])
 
 if os.path.exists(file_name):
     df_old = pd.read_csv(file_name)
-    # This logic handles new columns if brackets are added/removed in the future
+    # Ensure new columns don't break old data
     df_combined = pd.concat([df_old, df_new], sort=False).drop_duplicates(subset=['date'], keep='last').tail(30)
 else:
     df_combined = df_new
 
 df_combined.to_csv(file_name, index=False)
-print(f"🏁 Strategic File Updated: {file_name}")
+print(f"🏁 Alpha Dashboard Updated: {file_name}")
