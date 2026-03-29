@@ -2,19 +2,19 @@ name: Daily Gold Scrape
 
 on:
   schedule:
-    - cron: '0 21 * * *' # Runs at 9pm UTC daily
-  workflow_dispatch:      # Allows you to run it manually
+    - cron: '0 21 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # THIS BLOCK BELOW FIXES ERROR 128
     permissions:
-      contents: write
-    
+      contents: write # This gives the robot the "Key"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches the full history to avoid sync errors
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,12 +27,9 @@ jobs:
       - name: Run the script
         run: python main.py
 
-      - name: Save the data
-        run: |
-          git config --global user.name 'GoldBot'
-          git config --global user.email 'bot@github.com'
-          git add gold_data.csv
-          # 'pull --rebase' ensures the robot stays in sync with your manual edits
-          git pull --rebase origin main
-          git commit -m "Update daily gold data" || echo "No changes"
-          git push origin main
+      # This tool is the "Traffic Cop" that fixes the Exit Code 128
+      - name: Auto-Save Data
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update daily gold data [bot]"
+          file_pattern: 'gold_data.csv'
