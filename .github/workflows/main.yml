@@ -2,7 +2,6 @@ name: Hourly Gold & Macro Scrape
 
 on:
   schedule:
-    # UPDATED: Runs at the top of every hour (24x per day)
     - cron: '0 * * * *'
   workflow_dispatch:
 
@@ -15,7 +14,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # VERY IMPORTANT: Tells GitHub to see the whole file history
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,5 +30,5 @@ jobs:
       - name: Auto-Save Pro Data
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Hourly Alpha Update: [TNX/VIX/Velocity MA]"
+          commit_message: "Hourly Update [Backfill Active]"
           file_pattern: 'gold_investment_pro.csv'
