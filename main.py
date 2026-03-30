@@ -9,24 +9,20 @@ import re
 def safe_get_json(url):
     try:
         response = requests.get(url, timeout=15)
-        # Handle 404 specifically to avoid noisy logs for new markets
-        if response.status_code == 404:
-            return None
+        if response.status_code == 404: return None
         response.raise_for_status()
         return response.json()
-    except Exception as e:
-        print(f"⚠️ API Alert: {url} skipped.")
-        return None
+    except: return None
 
 def get_market_data():
-    print("--- 🛰️ 2026 Robust Intelligence: Date-Fix Active ---")
+    print("--- 🛰️ 2026 Ultimate Resilience: Date & Backfill Logic ---")
     SLUGS = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825"}
-    # Force format to match the existing successful rows
+    # Use a clean format for the new entry
     now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     entry = {"date": now_ts, "gold_price": 0.0, "dxy_index": 0.0, "oil_wti": 0.0, "treasury_10y": 0.0, "vix_index": 0.0}
     
-    # 1. Macro Data
+    # 1. Macro Pulse
     tickers = {"gold_price": "GC=F", "oil_wti": "CL=F", "dxy_index": "DX-Y.NYB", "treasury_10y": "^TNX", "vix_index": "^VIX"}
     for key, ticker in tickers.items():
         try:
@@ -34,12 +30,11 @@ def get_market_data():
             if not h.empty: entry[key] = round(h['Close'].iloc[-1], 2)
         except: pass
 
-    # 2. Polymarket Data
+    # 2. Polymarket Pulse
     market_list = []
     for p, slug in SLUGS.items():
         data = safe_get_json(f"https://gamma-api.polymarket.com/events?slug={slug}")
         if not data or not data[0].get('markets'): continue
-        
         for m in data[0]['markets']:
             clean = re.sub(r'[^a-z0-9]', '_', m.get('groupItemTitle', '').lower() or m.get('question', '').lower()).strip('_')
             clean = re.sub(r'_+', '_', clean.replace('$', '').replace('<', 'under_').replace('>', 'over_'))
@@ -55,33 +50,44 @@ def get_market_data():
                     entry[f"{p}_{clean}_spread"] = round(float(book['asks'][0]['price']) - float(book['bids'][0]['price']), 4)
                     entry[f"{p}_{clean}_depth"] = round(sum([float(x['size']) for x in book['bids'][:5] + book['asks'][:5]]), 2)
                 market_list.append({"prefix": p, "clean": clean, "token_id": tid})
-    
     return entry, market_list
+
+def backfill_history(market_list):
+    print("⏳ Running Backfill Engine...")
+    history_rows = []
+    for m in market_list:
+        h_data = safe_get_json(f"https://clob.polymarket.com/prices-history?market={m['token_id']}&interval=1h")
+        if h_data and h_data.get('history'):
+            for p in h_data['history'][-48:]:
+                dt = datetime.fromtimestamp(p['t']).strftime("%Y-%m-%d %H:%M")
+                history_rows.append({"date": dt, f"{m['prefix']}_{m['clean']}_prob": round(float(p['p']) * 100, 2)})
+    return pd.DataFrame(history_rows)
 
 # --- EXECUTION ---
 file_name = "gold_investment_pro.csv"
 live_row, markets = get_market_data()
 df_live = pd.DataFrame([live_row])
 
-if os.path.exists(file_name):
+if os.path.exists(file_name) and os.path.getsize(file_name) > 1000:
     df_old = pd.read_csv(file_name)
-    # The 'sort=False' and 'concat' ensure we keep all old data even if formats shifted
+    # The 'sort=False' and 'concat' ensure we keep all old data
     df_final = pd.concat([df_old, df_live], ignore_index=True, sort=False)
 else:
-    df_final = df_live
+    df_final = pd.concat([backfill_history(markets), df_live], ignore_index=True, sort=False)
 
-# --- THE CRITICAL FIX ---
-# 'format=mixed' tells pandas to handle both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS
-df_final['date'] = pd.to_datetime(df_final['date'], errors='coerce', format='mixed')
-df_final = df_final.dropna(subset=['date']) # Remove any rows where date was corrupted
+# --- THE BRUTE FORCE DATE FIX ---
+# This converts everything to a standardized format and handles 'mixed' inputs
+df_final['date'] = pd.to_datetime(df_final['date'], format='mixed', errors='coerce')
+df_final = df_final.dropna(subset=['date']) # Clean any corrupted rows
 df_final = df_final.groupby('date').first().reset_index().sort_values('date')
 
 # Indicators
-for col in [c for c in df_final.columns if c.endswith('_prob')]:
+prob_cols = [c for c in df_final.columns if c.endswith('_prob')]
+for col in prob_cols:
     base = col.replace('_prob', '')
     df_final[f"{base}_velocity"] = df_final[col].diff().round(2)
     df_final[f"{base}_velocity_ma6"] = df_final[f"{base}_velocity"].rolling(window=6, min_periods=1).mean().round(2)
     df_final[f"{base}_signal"] = (df_final[f"{base}_velocity"] > df_final[f"{base}_velocity_ma6"]).astype(int)
 
 df_final.to_csv(file_name, index=False)
-print(f"🏁 Success. Gold: ${entry['gold_price']} | Total Data Points: {len(df_final)}")
+print(f"🏁 Update Successful. Total Rows: {len(df_final)}")
