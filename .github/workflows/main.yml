@@ -2,11 +2,14 @@ name: Hourly Gold & Macro Scrape
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    # Changed from 0 to 12 to avoid hourly traffic jams
+    # Added timezone support (New March 2026 Feature)
+    - cron: '12 * * * *'
+      timezone: 'America/New_York' 
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Fixes the Node.js warning
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
 
 jobs:
   build:
