@@ -1,9 +1,9 @@
-name: Daily Gold Scrape
+name: Hourly Gold & Macro Scrape
 
 on:
   schedule:
-    # Runs every 6 hours to capture VIX spikes and Treasury Yield shifts
-    - cron: '0 */6 * * *'
+    # UPDATED: Runs at the top of every hour (24x per day)
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -31,5 +31,5 @@ jobs:
       - name: Auto-Save Pro Data
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update 2026 Gold Pro Data [TNX/VIX Added]"
+          commit_message: "Hourly Alpha Update: [TNX/VIX/Velocity MA]"
           file_pattern: 'gold_investment_pro.csv'
