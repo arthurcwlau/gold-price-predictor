@@ -2,14 +2,17 @@ name: Hourly Gold & Macro Scrape
 
 on:
   schedule:
-    - cron: '12 * * * *' # Running at minute 12 to avoid congestion
+    - cron: '12 * * * *' # Still running at minute 12 to avoid GitHub traffic jams
   workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Keeps the logs clean from Node.js warnings
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Crucial: Allows GitHub to save the CSV/PNG back to your repo
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -27,13 +30,12 @@ jobs:
       - name: Run Scraper
         run: python main.py
 
-      # NEW: Run visualization only once a day at 00:12 UTC
       - name: Run Visualizer
-        if: github.event.schedule == '12 0 * * *' || github.event_name == 'workflow_dispatch'
+        # Removed the 'if' condition so this runs every hour now
         run: python visualize.py
 
       - name: Auto-Save Data & Charts
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Hourly Data Update & Daily Chart"
+          commit_message: "Hourly Sync: Data + Momentum Chart"
           file_pattern: 'gold_investment_pro.csv momentum_report.png'
