@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  # Opts into Node 24 as requested by GitHub Actions deprecation notice
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Fixes the Node.js warning
 
 jobs:
   build:
@@ -23,7 +22,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Upgraded for 2026 performance
+          python-version: '3.11'
 
       - name: Install tools
         run: pip install requests pandas yfinance
@@ -34,5 +33,5 @@ jobs:
       - name: Auto-Save Pro Data
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Robust Hourly Update [Node24 Active]"
+          commit_message: "Robust Hourly Update [Node24 & DateFix]"
           file_pattern: 'gold_investment_pro.csv'
