@@ -8,16 +8,36 @@ import re
 import time
 
 def get_master_institutional_data():
-    print("--- 🛰️ 2026 Master Intelligence: Deep-Market Active ---")
+    print("--- 🛰️ 2026 Master Intelligence: TNX & VIX Enabled ---")
     
     SLUGS = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825"}
-    entry = {"date": datetime.now().strftime("%Y-%m-%d"), "gold_price": 0.0, "dxy_index": 0.0, "oil_wti": 0.0}
+    
+    # Initialize entry with new Macro columns
+    entry = {
+        "date": datetime.now().strftime("%Y-%m-%d"), 
+        "gold_price": 0.0, 
+        "dxy_index": 0.0, 
+        "oil_wti": 0.0,
+        "treasury_10y": 0.0, # ^TNX
+        "vix_index": 0.0     # ^VIX
+    }
 
-    # 1. Macro Pulse
-    try:
-        gh, oh, dh = yf.Ticker("GC=F").history(period="7d"), yf.Ticker("CL=F").history(period="7d"), yf.Ticker("DX-Y.NYB").history(period="7d")
-        entry.update({"gold_price": round(gh['Close'].iloc[-1], 2), "oil_wti": round(oh['Close'].iloc[-1], 2), "dxy_index": round(dh['Close'].iloc[-1], 2)})
-    except: pass
+    # 1. Macro Pulse (Yahoo Finance)
+    tickers = {
+        "gold_price": "GC=F",
+        "oil_wti": "CL=F",
+        "dxy_index": "DX-Y.NYB",
+        "treasury_10y": "^TNX",
+        "vix_index": "^VIX"
+    }
+    
+    for key, ticker in tickers.items():
+        try:
+            h = yf.Ticker(ticker).history(period="7d")
+            if not h.empty:
+                entry[key] = round(h['Close'].iloc[-1], 2)
+        except Exception as e:
+            print(f"!! Error fetching {ticker}: {e}")
 
     # 2. Institutional Helpers
     def get_price_velocity(token_id):
@@ -79,11 +99,10 @@ file_name = "gold_investment_pro.csv"
 
 if os.path.exists(file_name):
     df_old = pd.read_csv(file_name)
-    # This ensures old "NaN" columns are deleted automatically
     df_old = df_old[df_old.columns.intersection(df_new.columns)]
     df_combined = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(subset=['date'], keep='last')
 else:
     df_combined = df_new
 
 df_combined.to_csv(file_name, index=False)
-print("🏁 Deep Alpha Data Saved.")
+print("🏁 Deep Alpha Data (including TNX/VIX) Saved.")
