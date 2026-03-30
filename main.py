@@ -15,9 +15,9 @@ def safe_get_json(url):
     except: return None
 
 def get_market_data():
-    print("--- 🛰️ 2026 Ultimate Resilience: Date & Backfill Logic ---")
+    print("--- 🛰️ 2026 Resilient Intelligence: Multi-Format Support ---")
     SLUGS = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825"}
-    # Use a clean format for the new entry
+    # Standardize to a very simple format
     now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     entry = {"date": now_ts, "gold_price": 0.0, "dxy_index": 0.0, "oil_wti": 0.0, "treasury_10y": 0.0, "vix_index": 0.0}
@@ -69,16 +69,22 @@ live_row, markets = get_market_data()
 df_live = pd.DataFrame([live_row])
 
 if os.path.exists(file_name) and os.path.getsize(file_name) > 1000:
-    df_old = pd.read_csv(file_name)
-    # The 'sort=False' and 'concat' ensure we keep all old data
+    # Use low_memory=False to prevent type guessing errors
+    df_old = pd.read_csv(file_name, low_memory=False)
     df_final = pd.concat([df_old, df_live], ignore_index=True, sort=False)
 else:
     df_final = pd.concat([backfill_history(markets), df_live], ignore_index=True, sort=False)
 
-# --- THE BRUTE FORCE DATE FIX ---
-# This converts everything to a standardized format and handles 'mixed' inputs
-df_final['date'] = pd.to_datetime(df_final['date'], format='mixed', errors='coerce')
-df_final = df_final.dropna(subset=['date']) # Clean any corrupted rows
+# --- THE "FORCE FIX" FOR DATES ---
+# 1. Remove rows that might just be duplicates of the header
+df_final = df_final[df_final['date'] != 'date']
+# 2. Convert to datetime using the most flexible method possible
+df_final['date'] = pd.to_datetime(df_final['date'], errors='coerce')
+# 3. Drop rows that truly couldn't be parsed
+df_final = df_final.dropna(subset=['date'])
+# 4. Convert back to a consistent string format (YYYY-MM-DD HH:MM)
+df_final['date'] = df_final['date'].dt.strftime('%Y-%m-%d %H:%M')
+# 5. Group and sort
 df_final = df_final.groupby('date').first().reset_index().sort_values('date')
 
 # Indicators
