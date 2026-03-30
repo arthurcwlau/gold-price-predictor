@@ -2,35 +2,31 @@ name: Hourly Gold & Macro Scrape
 
 on:
   schedule:
-    # Runs at the top of every hour (24 times a day)
     - cron: '0 * * * *'
-  workflow_dispatch: # Allows you to trigger it manually from the Actions tab
+  workflow_dispatch:
+
+env:
+  # Opts into Node 24 as requested by GitHub Actions deprecation notice
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
-    # CRITICAL: Gives the runner permission to save the CSV back to your repo
     permissions:
       contents: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # CRITICAL: fetch-depth 0 downloads the full history of your CSV 
-          # so the script can append new data to old data.
           fetch-depth: 0 
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11' # Upgraded for 2026 performance
 
       - name: Install tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests pandas yfinance
+        run: pip install requests pandas yfinance
 
       - name: Run script
         run: python main.py
@@ -38,6 +34,5 @@ jobs:
       - name: Auto-Save Pro Data
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Hourly Update & Backfill [Automation Active]"
-          # This must match the filename in your main.py
+          commit_message: "Robust Hourly Update [Node24 Active]"
           file_pattern: 'gold_investment_pro.csv'
