@@ -6,15 +6,16 @@ import os
 import json
 import re
 
-def get_master_data():
-    print("--- 🛰️ 2026 Resilient Intelligence: Backfill Enabled ---")
+def get_market_data():
+    print("--- 🛰️ 2026 Ultimate Alpha: Backfill & Merge Active ---")
     
     SLUGS = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825"}
-    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Force top-of-hour format for perfect merging
+    now_ts = datetime.now().strftime("%Y-%m-%d %H:00")
     
-    # 1. LIVE DATA POINT
     entry = {"date": now_ts, "gold_price": 0.0, "dxy_index": 0.0, "oil_wti": 0.0, "treasury_10y": 0.0, "vix_index": 0.0}
     
+    # 1. Live Macro
     tickers = {"gold_price": "GC=F", "oil_wti": "CL=F", "dxy_index": "DX-Y.NYB", "treasury_10y": "^TNX", "vix_index": "^VIX"}
     for key, ticker in tickers.items():
         try:
@@ -22,6 +23,7 @@ def get_master_data():
             if not h.empty: entry[key] = round(h['Close'].iloc[-1], 2)
         except: pass
 
+    # 2. Live Polymarket
     market_list = []
     for p, slug in SLUGS.items():
         try:
@@ -32,12 +34,11 @@ def get_master_data():
                 
                 prices = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
                 entry[f"{p}_{clean}_prob"] = round(float(prices[0]) * 100, 2)
-                entry[f"{p}_{clean}_vol"] = round(float(m.get('volume', 0)), 2)
                 
                 tokens = m.get('clobTokenIds')
                 if tokens:
                     tid = tokens[0] if isinstance(tokens, list) else json.loads(tokens)[0]
-                    # Get Depth/Spread
+                    # Depth/Spread
                     r = requests.get(f"https://clob.polymarket.com/book?token_id={tid}").json()
                     b, a = r.get('bids', []), r.get('asks', [])
                     if b and a:
@@ -49,49 +50,48 @@ def get_master_data():
     return entry, market_list
 
 def backfill_missing_hours(market_list):
-    print("⏳ Auto-Backfilling 48 Hours of Hourly History...")
+    print("⏳ Auto-Backfilling 48h History...")
     history_data = []
-    
-    # Backfill Macro (7 Days, Hourly)
+    # Macro History (7d)
     macro_h = {}
     tickers = {"gold_price": "GC=F", "oil_wti": "CL=F", "dxy_index": "DX-Y.NYB", "treasury_10y": "^TNX", "vix_index": "^VIX"}
     for key, ticker in tickers.items():
         macro_h[key] = yf.Ticker(ticker).history(period="7d", interval="1h")['Close']
 
-    # Backfill Polymarket Probabilities (Last 48 Points)
+    # Poly History (48h)
     for m in market_list:
         try:
             prices = requests.get(f"https://clob.polymarket.com/prices-history?market={m['token_id']}&interval=1h").json().get('history', [])
             for p in prices[-48:]:
-                dt = datetime.fromtimestamp(p['t']).strftime("%Y-%m-%d %H:%M")
+                dt = datetime.fromtimestamp(p['t']).strftime("%Y-%m-%d %H:00")
                 row = {"date": dt, f"{m['prefix']}_{m['clean']}_prob": round(float(p['p']) * 100, 2)}
-                # Match macro prices for that timestamp
-                ts = pd.to_datetime(dt)
+                ts = pd.to_datetime(dt).tz_localize(None)
                 for k in tickers.keys():
-                    if ts in macro_h[k].index: row[k] = round(macro_h[k].loc[ts], 2)
+                    idx = macro_h[k].index.tz_localize(None)
+                    if ts in idx: row[k] = round(macro_h[k].loc[ts], 2)
                 history_data.append(row)
         except: pass
     return pd.DataFrame(history_data)
 
-# --- EXECUTION & MERGE LOGIC ---
-live_row, markets = get_master_data()
+# --- EXECUTION ---
+live_row, markets = get_market_data()
 df_live = pd.DataFrame([live_row])
 file_name = "gold_investment_pro.csv"
 
-if os.path.exists(file_name) and os.path.getsize(file_name) > 500:
-    df_old = pd.read_csv(file_name)
-    # Merge existing and new (sort=False preserves old columns if new one is missing)
-    df_final = pd.concat([df_old, df_live], ignore_index=True, sort=False)
+if os.path.exists(file_name) and os.path.getsize(file_name) > 1000:
+    df_final = pd.read_csv(file_name)
+    # RESILIENT CONCAT: Keep all columns, no intersections
+    df_final = pd.concat([df_final, df_live], ignore_index=True, sort=False)
 else:
-    # First time or reset: Pull 48h history
+    print("Starting fresh with Backfill...")
     df_final = pd.concat([backfill_missing_hours(markets), df_live], ignore_index=True, sort=False)
 
-# Clean Up: Remove duplicates, sort by date
+# Clean and Sort
 df_final['date'] = pd.to_datetime(df_final['date'])
 df_final = df_final.groupby('date').first().reset_index()
 df_final = df_final.sort_values('date')
 
-# --- CALCULATE SIGNALS (NOW WORKS INSTANTLY ON BACKFILL) ---
+# Calculate Indicators (Works instantly on backfill)
 prob_cols = [c for c in df_final.columns if c.endswith('_prob')]
 for col in prob_cols:
     base = col.replace('_prob', '')
@@ -100,4 +100,4 @@ for col in prob_cols:
     df_final[f"{base}_signal"] = (df_final[f"{base}_velocity"] > df_final[f"{base}_velocity_ma6"]).astype(int)
 
 df_final.to_csv(file_name, index=False)
-print(f"🏁 File updated. Current record count: {len(df_final)}")
+print(f"🏁 Done. Total Rows: {len(df_final)}")
