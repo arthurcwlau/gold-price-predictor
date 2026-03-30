@@ -2,14 +2,8 @@ name: Hourly Gold & Macro Scrape
 
 on:
   schedule:
-    # Changed from 0 to 12 to avoid hourly traffic jams
-    # Added timezone support (New March 2026 Feature)
-    - cron: '12 * * * *'
-      timezone: 'America/New_York' 
+    - cron: '12 * * * *' # Running at minute 12 to avoid congestion
   workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
 
 jobs:
   build:
@@ -28,13 +22,18 @@ jobs:
           python-version: '3.11'
 
       - name: Install tools
-        run: pip install requests pandas yfinance
+        run: pip install requests pandas yfinance matplotlib
 
-      - name: Run script
+      - name: Run Scraper
         run: python main.py
 
-      - name: Auto-Save Pro Data
+      # NEW: Run visualization only once a day at 00:12 UTC
+      - name: Run Visualizer
+        if: github.event.schedule == '12 0 * * *' || github.event_name == 'workflow_dispatch'
+        run: python visualize.py
+
+      - name: Auto-Save Data & Charts
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Robust Hourly Update [Node24 & DateFix]"
-          file_pattern: 'gold_investment_pro.csv'
+          commit_message: "Hourly Data Update & Daily Chart"
+          file_pattern: 'gold_investment_pro.csv momentum_report.png'
