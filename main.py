@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 import re
@@ -14,22 +14,25 @@ def safe_get_json(url):
         return response.json()
     except: return None
 
-def get_market_data():
-    print("--- 🛰️ 2026 Master Intel: Non-Destructive Build ---")
+def run_recovery_and_scrape():
+    print("--- 🚀 2026 SUPER RECOVERY ENGINE: REBUILDING HISTORY ---")
     SLUGS = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825"}
-    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    TICKERS = {"gold_price": "GC=F", "oil_wti": "CL=F", "dxy_index": "DX-Y.NYB", "treasury_10y": "^TNX", "vix_index": "^VIX"}
     
-    entry = {"date": now_ts, "gold_price": 0.0, "dxy_index": 0.0, "oil_wti": 0.0, "treasury_10y": 0.0, "vix_index": 0.0}
-    
-    # 1. Live Macro (Yahoo Finance)
-    tickers = {"gold_price": "GC=F", "oil_wti": "CL=F", "dxy_index": "DX-Y.NYB", "treasury_10y": "^TNX", "vix_index": "^VIX"}
-    for key, ticker in tickers.items():
+    # 1. Backfill Macro History (Last 7 Days)
+    history_dict = {}
+    print("Pulling 7 days of hourly Macro data...")
+    for key, ticker in TICKERS.items():
         try:
-            h = yf.Ticker(ticker).history(period="1d")
-            if not h.empty: entry[key] = round(h['Close'].iloc[-1], 2)
+            h = yf.Ticker(ticker).history(period="7d", interval="1h")
+            for ts, val in h['Close'].items():
+                dt = ts.strftime('%Y-%m-%d %H:00')
+                if dt not in history_dict: history_dict[dt] = {"date": dt}
+                history_dict[dt][key] = round(val, 2)
         except: pass
 
-    # 2. Live Polymarket (Depth & Probability)
+    # 2. Backfill Polymarket History (Last 72 Hours)
+    print("Identifying and backfilling Prediction Market tokens...")
     for p, slug in SLUGS.items():
         data = safe_get_json(f"https://gamma-api.polymarket.com/events?slug={slug}")
         if not data or not data[0].get('markets'): continue
@@ -37,40 +40,30 @@ def get_market_data():
             clean = re.sub(r'[^a-z0-9]', '_', (m.get('groupItemTitle') or m.get('question')).lower()).strip('_')
             clean = re.sub(r'_+', '_', clean.replace('$', '').replace('<', 'under_').replace('>', 'over_'))
             
-            prices = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
-            if prices: entry[f"{p}_{clean}_prob"] = round(float(prices[0]) * 100, 2)
-            
             tokens = m.get('clobTokenIds')
             if tokens:
                 tid = tokens[0] if isinstance(tokens, list) else json.loads(tokens)[0]
-                book = safe_get_json(f"https://clob.polymarket.com/book?token_id={tid}")
-                if book and book.get('bids'):
-                    entry[f"{p}_{clean}_depth"] = round(sum([float(x['size']) for x in book['bids'][:5]]), 2)
-    return entry
+                h_data = safe_get_json(f"https://clob.polymarket.com/prices-history?market={tid}&interval=1h")
+                if h_data and h_data.get('history'):
+                    for p_point in h_data['history'][-72:]:
+                        dt = datetime.fromtimestamp(p_point['t']).strftime("%Y-%m-%d %H:00")
+                        if dt not in history_dict: history_dict[dt] = {"date": dt}
+                        history_dict[dt][f"{p}_{clean}_prob"] = round(float(p_point['p']) * 100, 2)
 
-# --- PERSISTENCE ENGINE ---
-file_name = "gold_investment_pro.csv"
-live_row = get_market_data()
-df_live = pd.DataFrame([live_row])
+    # 3. Create DataFrame and Calculate Signals
+    df_final = pd.DataFrame(list(history_dict.values()))
+    df_final = df_final.dropna(subset=['date']).sort_values('date')
 
-if os.path.exists(file_name):
-    df_old = pd.read_csv(file_name, low_memory=False)
-    # Standardize old dates to avoid mismatch
-    df_old['date'] = pd.to_datetime(df_old['date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
-    # Use sort=False to preserve all historical columns
-    df_final = pd.concat([df_old, df_live], ignore_index=True, sort=False)
-else:
-    df_final = df_live
+    # Calculate Velocity and Signals
+    prob_cols = [c for c in df_final.columns if c.endswith('_prob')]
+    for col in prob_cols:
+        base = col.replace('_prob', '')
+        df_final[f"{base}_velocity"] = df_final[col].diff().round(2)
+        df_final[f"{base}_velocity_ma6"] = df_final[f"{base}_velocity"].rolling(window=6, min_periods=1).mean().round(2)
+        df_final[f"{base}_signal"] = (df_final[f"{base}_velocity"] > df_final[f"{base}_velocity_ma6"]).astype(int)
 
-# Clean, Sort, and Re-calculate Velocity
-df_final = df_final.dropna(subset=['date']).groupby('date').first().reset_index().sort_values('date')
+    # Save to CSV
+    df_final.to_csv("gold_investment_pro.csv", index=False)
+    print(f"🏁 RECOVERY COMPLETE! Total hourly rows recovered: {len(df_final)}")
 
-prob_cols = [c for c in df_final.columns if c.endswith('_prob')]
-for col in prob_cols:
-    base = col.replace('_prob', '')
-    df_final[f"{base}_velocity"] = df_final[col].diff().round(2)
-    df_final[f"{base}_velocity_ma6"] = df_final[f"{base}_velocity"].rolling(window=6, min_periods=1).mean().round(2)
-    df_final[f"{base}_signal"] = (df_final[f"{base}_velocity"] > df_final[f"{base}_velocity_ma6"]).astype(int)
-
-df_final.to_csv(file_name, index=False)
-print(f"🏁 Data Saved. Current Rows: {len(df_final)}")
+run_recovery_and_scrape()
