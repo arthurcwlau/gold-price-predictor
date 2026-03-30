@@ -8,41 +8,33 @@ import re
 import time
 
 def get_master_institutional_data():
-    print("--- 🛰️ 2026 Master Intelligence: TNX & VIX Enabled ---")
+    print("--- 🛰️ 2026 Master Intelligence: Hourly Velocity MA Enabled ---")
     
     SLUGS = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825"}
     
-    # Initialize entry with new Macro columns
     entry = {
-        "date": datetime.now().strftime("%Y-%m-%d"), 
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"), # Added timestamp for hourly precision
         "gold_price": 0.0, 
         "dxy_index": 0.0, 
         "oil_wti": 0.0,
-        "treasury_10y": 0.0, # ^TNX
-        "vix_index": 0.0     # ^VIX
+        "treasury_10y": 0.0,
+        "vix_index": 0.0
     }
 
     # 1. Macro Pulse (Yahoo Finance)
-    tickers = {
-        "gold_price": "GC=F",
-        "oil_wti": "CL=F",
-        "dxy_index": "DX-Y.NYB",
-        "treasury_10y": "^TNX",
-        "vix_index": "^VIX"
-    }
+    tickers = {"gold_price": "GC=F", "oil_wti": "CL=F", "dxy_index": "DX-Y.NYB", "treasury_10y": "^TNX", "vix_index": "^VIX"}
     
     for key, ticker in tickers.items():
         try:
-            h = yf.Ticker(ticker).history(period="7d")
-            if not h.empty:
-                entry[key] = round(h['Close'].iloc[-1], 2)
-        except Exception as e:
-            print(f"!! Error fetching {ticker}: {e}")
+            h = yf.Ticker(ticker).history(period="5d")
+            if not h.empty: entry[key] = round(h['Close'].iloc[-1], 2)
+        except: pass
 
     # 2. Institutional Helpers
-    def get_price_velocity(token_id):
+    def get_hourly_velocity(token_id):
         try:
-            r = requests.get(f"https://clob.polymarket.com/prices-history?token_id={token_id}&interval=6h").json()
+            # Fetches the last 1 hour of price action for high-frequency detection
+            r = requests.get(f"https://clob.polymarket.com/prices-history?token_id={token_id}&interval=1h").json()
             h = r.get('history', [])
             if len(h) > 1: return round((float(h[-1]['p']) - float(h[0]['p'])) * 100, 2)
         except: pass
@@ -86,13 +78,13 @@ def get_master_institutional_data():
                 if tokens:
                     tid = tokens[0] if isinstance(tokens, list) else json.loads(tokens)[0]
                     entry[f"{prefix}_{clean}_spread"], entry[f"{prefix}_{clean}_depth"] = get_clob_data(tid)
-                    entry[f"{prefix}_{clean}_velocity"] = get_price_velocity(tid)
+                    entry[f"{prefix}_{clean}_velocity"] = get_hourly_velocity(tid)
         except: pass
 
     for p, s in SLUGS.items(): process_curve(s, p)
     return entry
 
-# --- Save Routine (Reset Logic) ---
+# --- Save & Alpha Calculation Routine ---
 new_data = get_master_institutional_data()
 df_new = pd.DataFrame([new_data])
 file_name = "gold_investment_pro.csv"
@@ -101,8 +93,20 @@ if os.path.exists(file_name):
     df_old = pd.read_csv(file_name)
     df_old = df_old[df_old.columns.intersection(df_new.columns)]
     df_combined = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(subset=['date'], keep='last')
+    
+    # --- MOMENTUM CROSSOVER LOGIC ---
+    # We calculate the 6-hour Moving Average for all Velocity columns
+    velocity_cols = [c for c in df_combined.columns if c.endswith('_velocity')]
+    for col in velocity_cols:
+        ma_col = col + "_ma6"
+        # Rolling average of the last 6 hours
+        df_combined[ma_col] = df_combined[col].rolling(window=6).mean().round(2)
+        
+        # Signal: 1 if Current Velocity > 6-hour Average (Acceleration)
+        signal_col = col + "_signal"
+        df_combined[signal_col] = (df_combined[col] > df_combined[ma_col]).astype(int)
 else:
     df_combined = df_new
 
 df_combined.to_csv(file_name, index=False)
-print("🏁 Deep Alpha Data (including TNX/VIX) Saved.")
+print("🏁 Hourly Alpha Data with Momentum Crossovers Saved.")
