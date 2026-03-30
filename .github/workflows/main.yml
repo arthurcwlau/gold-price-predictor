@@ -2,8 +2,9 @@ name: Daily Gold Scrape
 
 on:
   schedule:
-    - cron: '0 21 * * *'
-  workflow_dispatch:
+    # UPDATED: Runs every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Keep this so you can click "Run" manually!
 
 jobs:
   build:
@@ -30,6 +31,5 @@ jobs:
       - name: Auto-Save Pro Data
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update 2026 Gold Investment Pro Data"
-          # CRITICAL: This must match the filename in your Python script
+          commit_message: "Update 2026 Gold Investment Pro Data [$(date)]"
           file_pattern: 'gold_investment_pro.csv'
