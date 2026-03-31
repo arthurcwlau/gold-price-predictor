@@ -24,7 +24,7 @@ jobs:
         run: pip install pandas yfinance requests
 
       - name: Run Analytics
-        run: python gold_pulse_pro.py
+        run: python main.py
 
       - name: Commit and Push
         run: |
