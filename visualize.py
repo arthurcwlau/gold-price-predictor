@@ -3,57 +3,72 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os
 
-def generate_momentum_chart(file_name="gold_investment_pro.csv"):
+def generate_accuracy_chart(file_name="gold_investment_pro.csv"):
     if not os.path.exists(file_name):
         print(f"❌ {file_name} missing.")
         return
 
+    # 1. Load and Prepare Data
     df = pd.read_csv(file_name)
     df['date'] = pd.to_datetime(df['date'])
-    df_recent = df.tail(48) # 48 hours is better for a "Pulse" view
+    df = df.sort_values('date')
 
-    plt.switch_backend('Agg') # Headless mode for GitHub
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
-    plt.subplots_adjust(hspace=0.3)
+    # 2. Calculate Market Implied Fair Value (The Prediction)
+    # Midpoints based on your tiering logic
+    tier_midpoints = {
+        "gold_3_800_prob": 3600.0,
+        "gold_3_800_4_200_prob": 4000.0,
+        "gold_4_200_4_600_prob": 4400.0,
+        "gold_4_600_5_000_prob": 4800.0,
+        "gold_5_000_5_400_prob": 5200.0,
+        "gold_5_400_5_800_prob": 5600.0,
+        "gold_5_800_6_200_prob": 6000.0,
+        "gold_6_200_prob": 6400.0,
+    }
 
-    # --- TOP PLOT: Filter for meaningful probabilities (>5%) ---
-    prob_cols = [c for c in df.columns if c.endswith('_prob')]
-    for col in prob_cols:
-        if df_recent[col].max() > 5: # Only plot if there's a >5% chance
-            label = col.replace('_prob', '').replace('_', ' ').title()
-            ax1.plot(df_recent['date'], df_recent[col], label=f"{label} %", linewidth=2)
+    # Find which columns exist in your CSV
+    active_tiers = [c for c in tier_midpoints.keys() if c in df.columns]
     
-    ax1.set_title("Key Macro Probabilities (Last 48 Hours)", fontsize=14, fontweight='bold')
-    ax1.set_ylabel("Probability (%)")
-    ax1.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize=8) # Legend outside
-    ax1.grid(alpha=0.3)
+    # Calculate weighted average price for each row
+    def calculate_fair_value(row):
+        total_prob = row[active_tiers].sum()
+        if total_prob == 0: return None
+        weighted_sum = sum(row[col] * tier_midpoints[col] for col in active_tiers)
+        return weighted_sum / total_prob
 
-    # --- BOTTOM PLOT: Gold Momentum ---
-    # Pick the bin with the highest current probability to track velocity
-    current_probs = {c: df_recent[c].iloc[-1] for c in prob_cols if 'gold' in c}
-    top_gold_bin = max(current_probs, key=current_probs.get).replace('_prob', '')
+    df['predicted_price'] = df.apply(calculate_fair_value, axis=1)
+
+    # 3. Create the Accuracy Plot
+    plt.switch_backend('Agg') # Headless mode for GitHub Actions
+    plt.figure(figsize=(12, 7))
     
-    vel_col = f"{top_gold_bin}_velocity"
-    ma_col = f"{top_gold_bin}_velocity_ma6"
-    sig_col = f"{top_gold_bin}_signal"
+    # Plot Actual Gold Price
+    plt.plot(df['date'], df['gold_price'], label='Actual Gold Price (Spot)', 
+             color='#FFD700', linewidth=3, zorder=3)
+    
+    # Plot Predicted Gold Price (Sentiment Implied)
+    plt.plot(df['date'], df['predicted_price'], label='Market Implied Prediction (Polymarket)', 
+             color='#00BFFF', linestyle='--', linewidth=2, zorder=2)
 
-    if vel_col in df.columns:
-        ax2.fill_between(df_recent['date'], df_recent[vel_col], color='gold', alpha=0.3, label=f"{top_gold_bin} Vel")
-        ax2.plot(df_recent['date'], df_recent[ma_col], color='darkgoldenrod', linestyle='--', label="6hr Avg")
-        
-        # Bullish Highlight
-        ax2.fill_between(df_recent['date'], df_recent[vel_col].min(), df_recent[vel_col].max(), 
-                         where=(df_recent[sig_col] == 1), color='green', alpha=0.1)
+    # Shade the gap (The Error/Inaccuracy)
+    plt.fill_between(df['date'], df['gold_price'], df['predicted_price'], 
+                     color='gray', alpha=0.15, label='Prediction Gap')
 
-    ax2.set_title(f"Momentum: {top_gold_bin.replace('_', ' ').title()}", fontsize=14, fontweight='bold')
-    ax2.set_ylabel("Velocity")
-    ax2.legend(loc='upper left', fontsize=9)
-    ax2.grid(alpha=0.3)
-
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    plt.xticks(rotation=45)
-    plt.savefig("momentum_report.png", dpi=300, bbox_inches='tight')
-    print("📈 Fresh chart saved as PNG.")
+    # Formatting
+    plt.title("Gold Price vs. Market Prediction Accuracy", fontsize=16, fontweight='bold')
+    plt.ylabel("Price (USD)")
+    plt.xlabel("Time (UTC)")
+    plt.legend(loc='best')
+    plt.grid(alpha=0.3)
+    
+    # Clean up X-Axis (Date format)
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+    plt.xticks(rotation=30)
+    
+    # Save Output
+    plt.tight_layout()
+    plt.savefig("gold_accuracy_report.png", dpi=300)
+    print("📈 Accuracy chart generated: gold_accuracy_report.png")
 
 if __name__ == "__main__":
-    generate_momentum_chart()
+    generate_accuracy_chart()
