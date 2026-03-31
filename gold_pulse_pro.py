@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, timezone # Use timezone.utc
 import os
 import json
 import re
@@ -15,7 +15,7 @@ def safe_get_json(url):
     except: return None
 
 def get_live_market_data():
-    print("--- 🛰️ 2026 Pulse: Organized Secure Mode ---")
+    print("--- 🛰️ 2026 Pulse: Explicit UTC Mode ---")
     SLUGS = {
         "gold": "gc-settle-jun-2026", 
         "oil": "cl-hit-jun-2026", 
@@ -23,7 +23,8 @@ def get_live_market_data():
         "recession": "us-recession-by-end-of-2026"
     }
     
-    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Generate timestamp with 'Z' for explicit UTC recognition
+    now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M Z")
     entry = {"date": now_ts}
     
     tickers = {
@@ -54,7 +55,6 @@ def get_live_market_data():
             
             prices = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
             if prices: entry[f"{p}_{clean}_prob"] = round(float(prices[0]) * 100, 2)
-            
             entry[f"{p}_{clean}_vol"] = round(float(m.get('volume', 0)), 2)
             entry[f"{p}_{clean}_oi"] = round(float(m.get('openInterest', 0)), 2)
             entry[f"{p}_{clean}_liq"] = round(float(m.get('liquidity', 0)), 2)
@@ -66,7 +66,6 @@ def get_live_market_data():
                 if book and book.get('bids') and book.get('asks'):
                     entry[f"{p}_{clean}_spread"] = round(float(book['asks'][0]['price']) - float(book['bids'][0]['price']), 4)
                     entry[f"{p}_{clean}_depth"] = round(sum([float(x['size']) for x in book['bids'][:5]]), 2)
-                
                 last_p = safe_get_json(f"https://clob.polymarket.com/price?token_id={tid}")
                 if last_p and last_p.get('price'):
                     entry[f"{p}_{clean}_last_price"] = round(float(last_p['price']) * 100, 2)
@@ -79,21 +78,16 @@ df_new = pd.DataFrame([live_row])
 
 if os.path.exists(file_name):
     df_old = pd.read_csv(file_name, low_memory=False)
-    # Merge logic to fix gaps from previous naming changes
-    mapping = {'gold': 'gold_price', 'dxy': 'dxy_index', 'vix': 'vix_index', 'copper': 'copper_price'}
-    for lean_col, old_col in mapping.items():
-        if lean_col in df_old.columns:
-            df_old[old_col] = df_old[old_col].fillna(df_old[lean_col])
-    
     df_final = pd.concat([df_old, df_new], ignore_index=True, sort=False)
 else:
     df_final = df_new
 
-# Clean Up duplicate dates
 df_final['date'] = pd.to_datetime(df_final['date'], errors='coerce')
 df_final = df_final.dropna(subset=['date']).drop_duplicates(subset=['date']).sort_values('date')
 
-# Predictor logic
+# Format date with 'Z' for the final CSV
+df_final['date'] = df_final['date'].dt.strftime("%Y-%m-%d %H:%M Z")
+
 prob_cols = [c for c in df_final.columns if c.endswith('_prob')]
 for col in prob_cols:
     base = col.replace('_prob', '')
@@ -101,24 +95,11 @@ for col in prob_cols:
     df_final[f"{base}_velocity_ma6"] = df_final[f"{base}_velocity"].rolling(window=6, min_periods=1).mean().round(2)
     df_final[f"{base}_signal"] = (df_final[f"{base}_velocity"] > df_final[f"{base}_velocity_ma6"]).astype(int)
 
-# --- THE COLUMN ORGANIZER ---
-# 1. Start with Date and Gold Price
-# 2. Add yfinance data
-# 3. Everything else (Polymarket & Predictors)
-yf_order = [
-    "gold_price", "oil_wti", "dxy_index", "vix_index", "gold_vix",
-    "real_yield_proxy", "silver_price", "gold_miners", "copper_price",
-    "gld_etf_vol", "dxy_vol", "treasury_10y"
-]
-
+# Organize Columns
+yf_order = ["gold_price", "oil_wti", "dxy_index", "vix_index", "gold_vix", "real_yield_proxy", "silver_price", "gold_miners", "copper_price", "gld_etf_vol", "dxy_vol", "treasury_10y"]
 priority_cols = ['date'] + [c for c in yf_order if c in df_final.columns]
 other_cols = [c for c in df_final.columns if c not in priority_cols]
-
-# Drop extra columns from the "lean" testing phase to keep file clean
-lean_junk = ['gold', 'dxy', 'vix', 'copper', 'au_cu_ratio', 'recession_prob', 'z_gold', 'z_fear', 'divergence', 'signal']
-other_cols = [c for c in other_cols if c not in lean_junk]
-
 df_final = df_final[priority_cols + sorted(other_cols)]
 
 df_final.to_csv(file_name, index=False)
-print(f"🏁 Update Successful. File sorted with {len(df_final.columns)} columns.")
+print(f"🏁 Update Successful (UTC). Date: {live_row['date']}")
