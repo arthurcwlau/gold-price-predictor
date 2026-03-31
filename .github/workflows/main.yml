@@ -1,41 +1,36 @@
-name: Hourly Gold & Macro Scrape
+name: Gold Price Intelligence Pulse
 
 on:
   schedule:
-    - cron: '12 * * * *' # Still running at minute 12 to avoid GitHub traffic jams
-  workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Keeps the logs clean from Node.js warnings
+    # Runs at 9:00 AM New York time every weekday (2026 syntax)
+    - cron: '0 9 * * 1-5'
+      timezone: 'America/New_York'
+  workflow_dispatch: # Allows manual run
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Crucial: Allows GitHub to save the CSV/PNG back to your repo
+      contents: write # Important: Allows the bot to save the CSV back to your repo
     steps:
-      - name: Checkout code
+      - name: Checkout Repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install tools
-        run: pip install requests pandas yfinance matplotlib
+      - name: Install Dependencies
+        run: pip install pandas yfinance requests
 
-      - name: Run Scraper
-        run: python main.py
+      - name: Run Analytics
+        run: python gold_pulse.py
 
-      - name: Run Visualizer
-        # Removed the 'if' condition so this runs every hour now
-        run: python visualize.py
-
-      - name: Auto-Save Data & Charts
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Hourly Sync: Data + Momentum Chart"
-          file_pattern: 'gold_investment_pro.csv momentum_report.png'
+      - name: Commit and Push
+        run: |
+          git config --global user.name "Gold-Bot"
+          git config --global user.email "bot@github.com"
+          git add gold_investment_pro.csv
+          git commit -m "📈 Auto-update: $(date)" || echo "No changes to commit"
+          git push
