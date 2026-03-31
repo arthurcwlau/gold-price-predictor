@@ -26,6 +26,9 @@ jobs:
       - name: Run Analytics
         run: python main.py
 
+      - name: Run Visualization
+        run: python visualize.py
+
       - name: Commit and Push
         run: |
           git config --global user.name "Gold-Pro-Bot"
