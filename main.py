@@ -1,108 +1,52 @@
-import requests
 import pandas as pd
 import yfinance as yf
+import requests, os, re, json
 from datetime import datetime
-import os
-import json
-import re
-
-def safe_get_json(url):
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 404: return None
-        response.raise_for_status()
-        return response.json()
-    except: return None
 
 def get_live_market_data():
-    print("--- 🛰️ 2026 Pulse: Correlation Intelligence Mode ---")
-    SLUGS = {
-        "gold": "gc-settle-jun-2026", 
-        "oil": "cl-hit-jun-2026", 
-        "fed": "fed-decision-in-june-825",
-        "recession": "us-recession-by-end-of-2026"
-    }
+    # 1. Configuration & Batch Download
+    tickers = {"gold": "GC=F", "dxy": "DX-Y.NYB", "vix": "^VIX", "silver": "SI=F", "copper": "HG=F"}
+    raw = yf.download(list(tickers.values()), period="1d", progress=False)['Close'].iloc[-1]
     
-    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    entry = {"date": now_ts}
-    
-    # 1. Advanced Macro Tickers (Adding Miners and Copper)
-    tickers = {
-        "gold_price": "GC=F", 
-        "oil_wti": "CL=F", 
-        "dxy_index": "DX-Y.NYB", 
-        "vix_index": "^VIX",
-        "gold_vix": "^GVZ",
-        "real_yield_proxy": "TIP",
-        "silver_price": "SI=F",
-        "gold_miners": "GDX",      # Leading indicator: Miners move before the metal
-        "copper_price": "HG=F"     # Macro indicator: Gold/Copper ratio
-    }
-    
-    for key, ticker in tickers.items():
-        try:
-            h = yf.Ticker(ticker).history(period="1d")
-            if not h.empty: 
-                entry[key] = round(h['Close'].iloc[-1], 2)
-                # Specialized Volume Captures
-                if key == "gold_price":
-                    gld_h = yf.Ticker("GLD").history(period="1d")
-                    entry["gld_etf_vol"] = int(gld_h['Volume'].iloc[-1])
-                if key == "dxy_index":
-                    entry["dxy_vol"] = int(h['Volume'].iloc[-1])
-        except: pass
+    entry = {"date": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    entry.update({k: round(raw[v], 2) for k, v in tickers.items()})
+    entry["au_cu_ratio"] = round(entry["gold"] / entry["copper"], 2)
 
-    # 2. Deep Prediction Pulse
-    for p, slug in SLUGS.items():
-        data = safe_get_json(f"https://gamma-api.polymarket.com/events?slug={slug}")
-        if not data or not data[0].get('markets'): continue
-        for m in data[0]['markets']:
-            raw_title = (m.get('groupItemTitle') or m.get('question')).lower()
-            clean = re.sub(r'[^a-z0-9]', '_', raw_title).strip('_')
-            clean = re.sub(r'_+', '_', clean.replace('$', '').replace('<', 'under_').replace('>', 'over_'))
-            
-            prices = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
-            if prices: entry[f"{p}_{clean}_prob"] = round(float(prices[0]) * 100, 2)
-            
-            entry[f"{p}_{clean}_vol"] = round(float(m.get('volume', 0)), 2)
-            entry[f"{p}_{clean}_oi"] = round(float(m.get('openInterest', 0)), 2)
-            entry[f"{p}_{clean}_liq"] = round(float(m.get('liquidity', 0)), 2)
-            
-            tokens = m.get('clobTokenIds')
-            if tokens:
-                tid = tokens[0] if isinstance(tokens, list) else json.loads(tokens)[0]
-                book = safe_get_json(f"https://clob.polymarket.com/book?token_id={tid}")
-                if book and book.get('bids') and book.get('asks'):
-                    entry[f"{p}_{clean}_spread"] = round(float(book['asks'][0]['price']) - float(book['bids'][0]['price']), 4)
-                    entry[f"{p}_{clean}_depth"] = round(sum([float(x['size']) for x in book['bids'][:5]]), 2)
-                
-                last_p = safe_get_json(f"https://clob.polymarket.com/price?token_id={tid}")
-                if last_p and last_p.get('price'):
-                    entry[f"{p}_{clean}_last_price"] = round(float(last_p['price']) * 100, 2)
+    # 2. Polymarket Recession Sentiment (Macro Proxy)
+    try:
+        url = "https://gamma-api.polymarket.com/events?slug=us-recession-by-end-of-2026"
+        m_data = requests.get(url, timeout=10).json()[0]['markets']
+        prices = json.loads(m_data[0]['outcomePrices'])
+        entry["recession_prob"] = round(float(prices[0]) * 100, 2)
+    except: entry["recession_prob"] = None
     return entry
 
-# --- PERSISTENCE & SIGNAL ENGINE ---
+# --- Persistence & Divergence Engine ---
 file_name = "gold_investment_pro.csv"
-live_row = get_live_market_data()
-df_new = pd.DataFrame([live_row])
+new_row = get_live_market_data()
+df_new = pd.DataFrame([new_row])
 
 if os.path.exists(file_name):
-    df_old = pd.read_csv(file_path if 'file_path' in locals() else file_name, low_memory=False)
-    df_final = pd.concat([df_old, df_new], ignore_index=True, sort=False)
+    df = pd.read_csv(file_name)
+    # LEGACY PATCH: Automatically rename old columns to new short format
+    rename_map = {"gold_price": "gold", "dxy_index": "dxy", "vix_index": "vix", "copper_price": "copper"}
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    df = pd.concat([df, df_new], ignore_index=True)
 else:
-    df_final = df_new
+    df = df_new
 
-df_final['date'] = pd.to_datetime(df_final['date'], errors='coerce')
-df_final = df_final.dropna(subset=['date']).groupby('date').first().reset_index().sort_values('date')
-df_final['date'] = df_final['date'].dt.strftime('%Y-%m-%d %H:%M')
+# 3. Alpha Divergence Logic (Requires 10+ days of data)
+if len(df) > 10:
+    def z_score(s): return (s - s.rolling(20).mean()) / (s.rolling(20).std() + 1e-9)
+    df['z_gold'] = z_score(df['gold'])
+    df['z_fear'] = z_score(df['recession_prob'].ffill())
+    df['divergence'] = (df['z_gold'] - df['z_fear']).round(2)
+    # Signal: 1 = Underpriced Gold, -1 = Overpriced Gold
+    df['signal'] = 0
+    df.loc[df['divergence'] > 1.5, 'signal'] = -1
+    df.loc[df['divergence'] < -1.5, 'signal'] = 1
 
-# Calculate Indicators
-prob_cols = [c for c in df_final.columns if c.endswith('_prob')]
-for col in prob_cols:
-    base = col.replace('_prob', '')
-    df_final[f"{base}_velocity"] = df_final[col].diff().round(2)
-    df_final[f"{base}_velocity_ma6"] = df_final[f"{base}_velocity"].rolling(window=6, min_periods=1).mean().round(2)
-    df_final[f"{base}_signal"] = (df_final[f"{base}_velocity"] > df_final[f"{base}_velocity_ma6"]).astype(int)
-
-df_final.to_csv(file_name, index=False)
-print(f"🏁 Update Successful. New Proxies Active: GDX & Copper.")
+# Deduplicate and Save
+df = df.drop_duplicates(subset=['date']).sort_values('date')
+df.to_csv(file_name, index=False)
+print(f"✅ Success. Divergence: {df['divergence'].iloc[-1] if 'divergence' in df else 'Calculating...'}")
