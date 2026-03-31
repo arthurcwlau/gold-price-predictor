@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import yfinance as yf
-from datetime import datetime, timezone # Use timezone.utc
+from datetime import datetime, timezone
 import os
 import json
 import re
@@ -78,16 +78,22 @@ df_new = pd.DataFrame([live_row])
 
 if os.path.exists(file_name):
     df_old = pd.read_csv(file_name, low_memory=False)
+    
+    # REPAIR LOGIC: Move data from temporary 'lean' columns back to original names if they exist
+    mapping = {'gold': 'gold_price', 'dxy': 'dxy_index', 'vix': 'vix_index', 'copper': 'copper_price'}
+    for lean_col, old_col in mapping.items():
+        if lean_col in df_old.columns:
+            df_old[old_col] = df_old[old_col].fillna(df_old[lean_col])
+            
     df_final = pd.concat([df_old, df_new], ignore_index=True, sort=False)
 else:
     df_final = df_new
 
+# Standardize date column for sorting
 df_final['date'] = pd.to_datetime(df_final['date'], errors='coerce')
 df_final = df_final.dropna(subset=['date']).drop_duplicates(subset=['date']).sort_values('date')
 
-# Format date with 'Z' for the final CSV
-df_final['date'] = df_final['date'].dt.strftime("%Y-%m-%d %H:%M Z")
-
+# Predictor logic (Velocity / MA6 / Signal)
 prob_cols = [c for c in df_final.columns if c.endswith('_prob')]
 for col in prob_cols:
     base = col.replace('_prob', '')
@@ -95,10 +101,23 @@ for col in prob_cols:
     df_final[f"{base}_velocity_ma6"] = df_final[f"{base}_velocity"].rolling(window=6, min_periods=1).mean().round(2)
     df_final[f"{base}_signal"] = (df_final[f"{base}_velocity"] > df_final[f"{base}_velocity_ma6"]).astype(int)
 
-# Organize Columns
-yf_order = ["gold_price", "oil_wti", "dxy_index", "vix_index", "gold_vix", "real_yield_proxy", "silver_price", "gold_miners", "copper_price", "gld_etf_vol", "dxy_vol", "treasury_10y"]
+# --- THE COLUMN ORGANIZER ---
+yf_order = [
+    "gold_price", "oil_wti", "dxy_index", "vix_index", "gold_vix",
+    "real_yield_proxy", "silver_price", "gold_miners", "copper_price",
+    "gld_etf_vol", "dxy_vol", "treasury_10y"
+]
+
+# Standardize Date back to string with 'Z' for the final CSV
+df_final['date'] = df_final['date'].dt.strftime("%Y-%m-%d %H:%M Z")
+
 priority_cols = ['date'] + [c for c in yf_order if c in df_final.columns]
 other_cols = [c for c in df_final.columns if c not in priority_cols]
+
+# FINAL CLEAN: Drop the temporary "lean" test columns to keep your 360+ list tidy
+lean_junk = ['gold', 'dxy', 'vix', 'copper', 'au_cu_ratio', 'recession_prob', 'z_gold', 'z_fear', 'divergence', 'signal']
+other_cols = [c for c in other_cols if c not in lean_junk]
+
 df_final = df_final[priority_cols + sorted(other_cols)]
 
 df_final.to_csv(file_name, index=False)
