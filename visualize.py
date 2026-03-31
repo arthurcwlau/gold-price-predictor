@@ -10,6 +10,8 @@ def generate_accuracy_chart(file_name="gold_investment_pro.csv"):
 
     # 1. Load and Prepare Data
     df = pd.read_csv(file_name)
+    
+    # Ensure date is sorted and formatted correctly
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date')
 
@@ -29,46 +31,47 @@ def generate_accuracy_chart(file_name="gold_investment_pro.csv"):
     # Find which columns exist in your CSV
     active_tiers = [c for c in tier_midpoints.keys() if c in df.columns]
     
-    # Calculate weighted average price for each row
     def calculate_fair_value(row):
         total_prob = row[active_tiers].sum()
-        if total_prob == 0: return None
+        if total_prob == 0: 
+            return None
         weighted_sum = sum(row[col] * tier_midpoints[col] for col in active_tiers)
         return weighted_sum / total_prob
 
+    # Generate the prediction column
     df['predicted_price'] = df.apply(calculate_fair_value, axis=1)
 
     # 3. Create the Accuracy Plot
-    plt.switch_backend('Agg') # Headless mode for GitHub Actions
+    plt.switch_backend('Agg') # Essential for GitHub Actions (no GUI)
     plt.figure(figsize=(12, 7))
     
     # Plot Actual Gold Price
-    plt.plot(df['date'], df['gold_price'], label='Actual Gold Price (Spot)', 
-             color='#FFD700', linewidth=3, zorder=3)
+    plt.plot(df['date'], df['gold_price'], label='Actual Gold Price', 
+             color='#FFD700', linewidth=2.5, zorder=3)
     
-    # Plot Predicted Gold Price (Sentiment Implied)
-    plt.plot(df['date'], df['predicted_price'], label='Market Implied Prediction (Polymarket)', 
+    # Plot Predicted Gold Price
+    plt.plot(df['date'], df['predicted_price'], label='Polymarket Implied Prediction', 
              color='#00BFFF', linestyle='--', linewidth=2, zorder=2)
 
-    # Shade the gap (The Error/Inaccuracy)
+    # Shade the gap to visualize accuracy/error
     plt.fill_between(df['date'], df['gold_price'], df['predicted_price'], 
-                     color='gray', alpha=0.15, label='Prediction Gap')
+                     color='gray', alpha=0.1, label='Prediction Error')
 
     # Formatting
-    plt.title("Gold Price vs. Market Prediction Accuracy", fontsize=16, fontweight='bold')
+    plt.title("Gold Price vs. Market Prediction Accuracy", fontsize=14, fontweight='bold')
     plt.ylabel("Price (USD)")
     plt.xlabel("Time (UTC)")
     plt.legend(loc='best')
-    plt.grid(alpha=0.3)
+    plt.grid(alpha=0.2)
     
-    # Clean up X-Axis (Date format)
+    # Date formatting for X-axis
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
     plt.xticks(rotation=30)
     
-    # Save Output
+    # Save the result
     plt.tight_layout()
     plt.savefig("gold_accuracy_report.png", dpi=300)
-    print("📈 Accuracy chart generated: gold_accuracy_report.png")
+    print("📈 Fresh chart saved as gold_accuracy_report.png")
 
 if __name__ == "__main__":
     generate_accuracy_chart()
