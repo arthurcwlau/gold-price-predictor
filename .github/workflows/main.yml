@@ -2,8 +2,8 @@ name: Gold Pro Intelligence Pulse
 
 on:
   schedule:
-    - cron: '0 * * * *' # Runs hourly to capture 360+ data points for MA6
-  workflow_dispatch:
+    - cron: '0 * * * *' # Hourly update
+  workflow_dispatch:   # Allows manual trigger via the GitHub Actions tab
 
 jobs:
   build:
@@ -18,21 +18,22 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' # Speeds up subsequent runs
+          cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install pandas yfinance requests
+        run: pip install pandas yfinance requests matplotlib
 
-      - name: Run Analytics
+      - name: Run Analytics (Data Collection)
         run: python main.py
 
-      - name: Run Visualization
+      - name: Run Visualization (Accuracy Chart)
         run: python visualize.py
 
-      - name: Commit and Push
+      - name: Commit and Push Results
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          git add gold_investment_pro.csv
-          git commit -m "📊 Pro Update: $(date)" || echo "No changes"
+          # Add the CSV and the PNG image to the repository
+          git add gold_investment_pro.csv gold_accuracy_report.png
+          git commit -m "📊 Pro Update & Chart: $(date)" || echo "No changes to commit"
           git push
