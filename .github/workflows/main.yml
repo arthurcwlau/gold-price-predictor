@@ -24,6 +24,9 @@ jobs:
         run: pip install pandas yfinance requests matplotlib
 
       - name: Run Analytics (Data Collection)
+        # --- THIS IS THE CRITICAL SECTION ---
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
 
       - name: Run Visualization (Accuracy Chart)
