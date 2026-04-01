@@ -1,43 +1,35 @@
-name: Gold Pro Intelligence Pulse
+name: Gold Tail Risk Extractor
 
 on:
   schedule:
-    - cron: '0 * * * *' # Hourly update
-  workflow_dispatch:   # Allows manual trigger via the GitHub Actions tab
+    - cron: '0 * * * *' # Runs every hour
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: '3.9'
 
-      - name: Install Dependencies
-        # Added --upgrade to ensure yfinance doesn't break due to Yahoo API changes
-        run: pip install pandas yfinance --upgrade requests matplotlib
+      - name: Install dependencies
+        run: |
+          pip install pandas yfinance fredapi requests numpy
 
-      - name: Run Analytics (Data Collection)
-        # --- CRITICAL: This block passes your Secret to the Script ---
+      - name: Run Extraction
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
 
-      - name: Run Visualization (Accuracy Chart)
-        run: python visualize.py
-
-      - name: Commit and Push Results
+      - name: Commit and Push
         run: |
-          git config --global user.name "Gold-Pro-Bot"
-          git config --global user.email "bot@github.com"
-          # Ensure both the data and the chart are captured
-          git add gold_investment_pro.csv gold_accuracy_report.png
-          git commit -m "📊 Pro Update (FRED + Institutional): $(date)" || echo "No changes to commit"
+          git config --global user.name "Gold-Bot"
+          git config --global user.email "bot@macro.analyst"
+          git add "gold_investment_pro (23).csv"
+          git commit -m "Update Gold Moonshot and Macro Data: $(date)" || exit 0
           git push
