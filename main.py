@@ -114,6 +114,7 @@ if os.path.exists(file_name):
 else:
     df_final = df_new
 
+# 1. Standardize and Calculate Signals
 df_final['date'] = pd.to_datetime(df_final['date'], errors='coerce')
 df_final = df_final.dropna(subset=['date']).drop_duplicates(subset=['date']).sort_values('date')
 
@@ -124,12 +125,37 @@ for col in prob_cols:
     df_final[f"{base}_velocity_ma6"] = df_final[f"{base}_velocity"].rolling(window=6, min_periods=1).mean().round(2)
     df_final[f"{base}_signal"] = (df_final[f"{base}_velocity"] > df_final[f"{base}_velocity_ma6"]).astype(int)
 
-# Organize Columns
+# 2. --- NEW CLEANUP LOGIC: Mapping long names to short names ---
+# This fixes the empty "recession_velocity" issue
+mapping = {
+    'recession_us_recession_by_end_of_2026_prob': 'recession_prob',
+    'recession_us_recession_by_end_of_2026_velocity': 'recession_velocity',
+    'recession_us_recession_by_end_of_2026_velocity_ma6': 'recession_velocity_ma6',
+    'recession_us_recession_by_end_of_2026_signal': 'recession_signal'
+}
+
+for long_col, short_col in mapping.items():
+    if long_col in df_final.columns:
+        # Move data from long column to short column
+        df_final[short_col] = df_final[long_col]
+
+# 3. --- FINAL COLUMN ORGANIZER & JUNK REMOVAL ---
 df_final['date'] = df_final['date'].dt.strftime("%Y-%m-%d %H:%M Z")
-priority_cols = ['date', 'gold_price', 'oil_wti', 'inflation_expectation', 'credit_stress_spread']
+
+# Define priority columns
+priority_cols = [
+    'date', 'gold_price', 'oil_wti', 'recession_prob', 
+    'recession_velocity', 'recession_velocity_ma6', 'recession_signal',
+    'inflation_expectation', 'credit_stress_spread'
+]
+
+# List of junk/duplicate columns to delete
+junk_to_delete = [c for c in df_final.columns if 'recession_us_recession' in c]
+
 actual_priority = [c for c in priority_cols if c in df_final.columns]
-other_cols = sorted([c for c in df_final.columns if c not in actual_priority])
+other_cols = sorted([c for c in df_final.columns if c not in actual_priority and c not in junk_to_delete])
+
 df_final = df_final[actual_priority + other_cols]
 
 df_final.to_csv(file_name, index=False)
-print(f"🏁 MASTER Update Successful. Date: {live_row['date']}")
+print(f"🏁 MASTER Update Successful with Mapping. Date: {live_row['date']}")
