@@ -35,5 +35,5 @@ jobs:
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
           git add gold_investment_pro.csv
-          git commit -m "📊 Ultimate Build: Macro + Price + Crowd + Narrative" || echo "No changes"
+          git commit -m "📊 Dynamic Discovery Update: $(date)" || echo "No changes"
           git push
