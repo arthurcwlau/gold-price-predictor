@@ -27,7 +27,6 @@ jobs:
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-          NYT_API_KEY: ${{ secrets.NYT_API_KEY }}
         run: python main.py
 
       - name: Commit Results
@@ -35,5 +34,5 @@ jobs:
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
           git add gold_investment_pro.csv
-          git commit -m "📊 Dynamic Discovery Update: $(date)" || echo "No changes"
+          git commit -m "📊 AV-Sentiment Enhanced Update: $(date)" || echo "No changes"
           git push
