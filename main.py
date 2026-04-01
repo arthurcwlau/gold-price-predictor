@@ -54,16 +54,28 @@ def get_live_market_data(fred_key=None):
         "treasury_10y": "^TNX" # RESTORED
     }
     
+
     for key, ticker in tickers.items():
         try:
             h = yf.Ticker(ticker).history(period="5d")
             if not h.empty: 
                 entry[key] = round(h['Close'].iloc[-1], 2)
+                
+                # RESTORED: Catch GLD volume as a proxy for Gold interest
                 if key == "gold_price":
                     gld_h = yf.Ticker("GLD").history(period="5d")
                     if not gld_h.empty: entry["gld_etf_vol"] = int(gld_h['Volume'].iloc[-1])
-        except: pass
+                
+                # RESTORED: Catch DXY volume (Note: This may often be 0 for this specific ticker)
+                if key == "dxy_index":
+                    entry["dxy_vol"] = int(h['Volume'].iloc[-1]) if 'Volume' in h.columns else 0
+                    
+        except Exception as e:
+            print(f"⚠️ Error fetching {ticker}: {e}")
+            pass
 
+
+    
     for p, slug in SLUGS.items():
         data = safe_get_json(f"https://gamma-api.polymarket.com/events?slug={slug}")
         if not data or not data[0].get('markets'): continue
