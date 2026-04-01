@@ -2,8 +2,8 @@ name: Gold Pro Intelligence Pulse
 
 on:
   schedule:
-    - cron: '0 * * * *' # Hourly update
-  workflow_dispatch:   # Manual trigger
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -21,23 +21,17 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        # CRITICAL: upgrade yfinance to ensure the restored tickers (Treasury/Miners) work
-        run: pip install pandas yfinance --upgrade requests matplotlib
+        run: pip install pandas yfinance --upgrade requests
 
-      - name: Run Analytics (Data Collection)
+      - name: Run Analytics
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
 
-      - name: Run Visualization
-        # Note: If your visualize.py isn't ready for the new columns, it might error.
-        # If it does, you can temporarily comment this line out.
-        run: python visualize.py || echo "Visualization skipped"
-
-      - name: Commit and Push Results
+      - name: Commit Results
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          git add gold_investment_pro.csv gold_accuracy_report.png
-          git commit -m "📊 Master Update: Restored Polymarket Metrics & FRED Anchor" || echo "No changes"
+          git add gold_investment_pro.csv
+          git commit -m "📊 Source-Grouped Update: $(date)" || echo "No changes"
           git push
