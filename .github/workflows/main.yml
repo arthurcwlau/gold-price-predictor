@@ -21,10 +21,11 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install pandas yfinance requests matplotlib
+        # Added --upgrade to ensure yfinance doesn't break due to Yahoo API changes
+        run: pip install pandas yfinance --upgrade requests matplotlib
 
       - name: Run Analytics (Data Collection)
-        # --- THIS IS THE CRITICAL SECTION ---
+        # --- CRITICAL: This block passes your Secret to the Script ---
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
@@ -36,7 +37,7 @@ jobs:
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          # Add the CSV and the PNG image to the repository
+          # Ensure both the data and the chart are captured
           git add gold_investment_pro.csv gold_accuracy_report.png
-          git commit -m "📊 Pro Update & Chart: $(date)" || echo "No changes to commit"
+          git commit -m "📊 Pro Update (FRED + Institutional): $(date)" || echo "No changes to commit"
           git push
