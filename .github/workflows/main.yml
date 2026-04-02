@@ -3,12 +3,12 @@ name: Gold Pro Intelligence Pulse
 on:
   schedule:
     - cron: '0 * * * *' # Runs every hour on the dot
-  workflow_dispatch:   # Allows you to run it manually whenever you want
+  workflow_dispatch:   # Allows you to run it manually via the Actions tab
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # This ensures the bot has permission to save data back to your repo
+    # CRITICAL: This gives the bot permission to save the CSV back to your repo
     permissions:
       contents: write
     
@@ -16,7 +16,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
         with:
-          # Fetches all history so rebase works correctly
+          # Fetches full history so the rebase/sync works perfectly
           fetch-depth: 0 
 
       - name: Setup Python
@@ -26,7 +26,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        # Removed matplotlib to make the run faster
+        # Optimized to only install what is necessary for the CSV engine
         run: pip install pandas yfinance --upgrade requests
 
       - name: Run Analytics (Data Collection)
@@ -38,11 +38,15 @@ jobs:
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
+          
+          # 1. Stage the updated CSV
           git add gold_investment_pro.csv
           
-          # CRITICAL: Pull latest changes before pushing to avoid "Divergent Branch" errors
+          # 2. Commit locally FIRST (Fixes the "index contains uncommitted changes" error)
+          git commit -m "📊 Intelligence Pulse: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes to commit"
+          
+          # 3. Sync with any manual changes you made on GitHub.com
           git pull --rebase origin main
           
-          # Only commit if the file actually changed
-          git commit -m "📊 Intelligence Pulse: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes to commit"
+          # 4. Push the final synchronized data
           git push origin main
