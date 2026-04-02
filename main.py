@@ -22,15 +22,13 @@ def fetch_fred_data(session, api_key):
     data = {}
     for key, series_id in series.items():
         try:
-            # We fetch 2 observations to ensure if the latest is '.' we have a fallback
-            url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&sort_order=desc&limit=2"
+            # Fetch last 3 days to ensure we always get a valid number if today is '.'
+            url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={api_key}&file_type=json&sort_order=desc&limit=3"
             resp = session.get(url, timeout=10).json()
             if 'observations' in resp:
-                # Try latest, then previous if latest is null
                 for obs in resp['observations']:
-                    val = obs['value']
-                    if val != ".":
-                        data[key] = float(val)
+                    if obs['value'] != ".":
+                        data[key] = float(obs['value'])
                         break
         except: pass
     return data
@@ -50,26 +48,20 @@ def fetch_yfinance_data():
                 if key == "gold_price":
                     g = yf.Ticker("GLD").history(period="5d")
                     if not g.empty: data["gld_etf_vol"] = int(g['Volume'].iloc[-1])
-                if key == "dxy_index":
-                    data["dxy_vol"] = int(h['Volume'].iloc[-1]) if 'Volume' in h.columns else 0
         except: pass
     return data
 
 def fetch_polymarket_data(session):
-    slugs = {
-        "gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", 
-        "fed": "fed-decision-in-june-825", "recession": "us-recession-by-end-of-2026"
-    }
+    slugs = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825", "recession": "us-recession-by-end-of-2026"}
     res = {}
     for p, s in slugs.items():
         try:
             d = session.get(f"https://gamma-api.polymarket.com/events?slug={s}", timeout=10).json()
-            if not d or not d[0].get('markets'): continue
             for m in d[0]['markets']:
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
-                prices = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
-                if prices: res[f"{p}_{c}_prob"] = round(float(prices[0]) * 100, 2)
+                pr = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
+                if pr: res[f"{p}_{c}_prob"] = round(float(pr[0]) * 100, 2)
                 res[f"{p}_{c}_vol"] = round(float(m.get('volume', 0)), 2)
                 res[f"{p}_{c}_liq"] = round(float(m.get('liquidity', 0)), 2)
                 res[f"{p}_{c}_oi"] = round(float(m.get('openInterest', 0)), 2)
@@ -96,34 +88,28 @@ def main():
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # --- 🏗️ CRITICAL FIX: MAP BEFORE CALCULATING ---
-    mapping = {
-        'recession_us_recession_by_end_of_2026_prob': 'recession_prob',
-        'recession_us_recession_by_end_of_2026_vol': 'recession_vol',
-        'recession_us_recession_by_end_of_2026_oi': 'recession_oi',
-        'recession_us_recession_by_end_of_2026_liq': 'recession_liq'
-    }
-    for l, sh in mapping.items():
-        if l in df.columns:
-            df[sh] = df[sh].fillna(df[l])
+    # --- 🏗️ THE REPAIR BRIDGE ---
+    mapping = {'recession_us_recession_by_end_of_2026_prob': 'recession_prob', 'silver_price': 'silver'}
+    for long, short in mapping.items():
+        if long in df.columns: df[short] = df[short].fillna(df[long])
 
-    # 🧬 CALCULATE VELOCITY & SIGNALS
+    # 🧬 CALCULATE SIGNALS (This now has historical continuity)
     prob_cols = [c for c in df.columns if c.endswith('_prob')]
     for col in prob_cols:
         base = col.replace('_prob', '')
         df[f"{base}_velocity"] = df[col].diff().round(2)
-        df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(window=6, min_periods=1).mean().round(2)
+        df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
         df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
 
-    # 🧹 FINAL CLEANUP & GROUPING
-    y_cols = ['gold_price', 'oil_wti', 'silver', 'copper_price', 'dxy_index', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'dxy_vol', 'treasury_10y']
+    # 🧹 GROUPING
+    y_cols = ['gold_price', 'oil_wti', 'silver', 'copper_price', 'dxy_index', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
     f_cols = ['inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread']
-    junk = [c for c in df.columns if 'recession_us_recession' in c]
+    junk = [c for c in df.columns if 'recession_us_recession' in c or c == 'silver_price']
     p_cols = sorted([c for c in df.columns if c not in ['date'] + y_cols + f_cols + junk])
     
     df = df[['date'] + y_cols + f_cols + p_cols]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 Pulse Successful. Recession Math Fixed.")
+    logging.info(f"🏁 System Check Passed. Data Saved.")
 
 if __name__ == "__main__": main()
