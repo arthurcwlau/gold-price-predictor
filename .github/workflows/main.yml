@@ -33,7 +33,6 @@ jobs:
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
           git add gold_investment_pro.csv
-          # Use pull with rebase to prevent pipeline breaks
           git pull --rebase origin main
-          git commit -m "📊 Fixed Recession Math & FRED Rollback: $(date)" || echo "No changes"
+          git commit -m "📊 Intelligence Pulse (Auto-Repair Enabled): $(date)" || echo "No changes"
           git push
