@@ -33,28 +33,31 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    """Captures all Predictive Market Anchors with strict naming."""
+    """Captures all market anchors using a strict, unified dictionary."""
     tickers = {
         "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", 
         "copper_price": "HG=F", "usd_etf": "UUP", "vix_index": "^VIX", 
         "gold_vix": "^GVZ", "real_yield_proxy": "TIP", "gold_miners": "GDX", 
-        "treasury_10y": "^TNX", "btc_sentiment": "BTC-USD", "geopol_ita": "ITA",
-        "skew_index": "^SKEW", "eastern_bid": "XAUCNY=X"
+        "treasury_10y": "^TNX", "btc_sentiment": "BTC-USD", "geopol_ita": "ITA"
     }
     data = {}
     for key, symbol in tickers.items():
         try:
-            # Use 5-day history to ensure a clean last-hour capture
-            h = yf.Ticker(symbol).history(period="5d", interval="1h")
+            t = yf.Ticker(symbol)
+            h = t.history(period="5d", interval="1h")
             if not h.empty:
-                data[key] = round(h['Close'].iloc[-1], 2)
-                if key == "usd_etf":
-                    data["usd_volume"] = int(h['Volume'].iloc[-1])
+                last_bar = h.iloc[-1]
+                data[key] = round(last_bar['Close'], 2)
+                # Capture High/Low/Vol for trade strategy
+                data[f"{key.replace('_price','')}_high"] = round(last_bar['High'], 2)
+                data[f"{key.replace('_price','')}_low"] = round(last_bar['Low'], 2)
+                if 'Volume' in h.columns:
+                    data[f"{key.replace('_price','')}_volume"] = int(last_bar['Volume'])
+                
                 if key == "gold_price":
                     g = yf.Ticker("GLD").history(period="5d")
                     if not g.empty: data["gld_etf_vol"] = int(g['Volume'].iloc[-1])
-        except Exception as e:
-            logging.warning(f"Retrieval skip for {key}: {e}")
+        except: pass
     return data
 
 def fetch_polymarket_data(session):
@@ -67,7 +70,7 @@ def fetch_polymarket_data(session):
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
                 
-                # Internal Renaming for the Recession column
+                # Unify Recession column immediately
                 prefix = f"{p}_{c}"
                 if "us_recession_by_end_of_2026" in prefix: prefix = "recession"
                 
@@ -77,9 +80,8 @@ def fetch_polymarket_data(session):
                 res[f"{prefix}_liq"] = round(float(m.get('liquidity', 0)), 2)
                 res[f"{prefix}_oi"] = round(float(m.get('openInterest', 0)), 2)
                 
-                # Fetch Depth/Spread (Only if liquidity exists)
                 tks = m.get('clobTokenIds')
-                if tks and float(m.get('liquidity', 0)) > 0:
+                if tks:
                     tid = tks[0] if isinstance(tks, list) else json.loads(tks)[0]
                     bk = session.get(f"https://clob.polymarket.com/book?token_id={tid}", timeout=10).json()
                     if bk.get('bids') and bk.get('asks'):
@@ -97,51 +99,50 @@ def main():
         row.update(fetch_fred_data(s, os.getenv("FRED_API_KEY")))
         row.update(fetch_polymarket_data(s))
 
-    # 1. LOAD & PURGE REDUNDANCY
     if os.path.exists(fn):
         df = pd.read_csv(fn)
-        # Remove dotted columns (.1, .2) caused by sync errors
-        df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')]
+        df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')] # Delete redundant dotted columns
     else:
         df = pd.DataFrame()
 
-    df_new = pd.DataFrame([row])
-    df = pd.concat([df, df_new], ignore_index=True, sort=False)
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True, sort=False)
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # 2. REPAIR BRIDGE (Syncing fragmented names)
-    bridge = {'silver_price': 'silver', 'oil_price': 'oil_wti', 'gold_miners_price': 'gold_miners', 'gold_vix_price': 'gold_vix'}
+    # Repair Bridge (Merge fragmented names)
+    bridge = {'oil_price': 'oil_wti', 'silver_price': 'silver', 'gold_miners_price': 'gold_miners', 'gold_vix_price': 'gold_vix'}
     for old, target in bridge.items():
         if old in df.columns:
             if target not in df.columns: df[target] = np.nan
             df[target] = df[target].fillna(df[old])
 
-    # 3. ADVANCED INDICATOR ENGINE (Calculated on full dataframe)
+    # Indicators (Only if columns exist)
     if 'gold_price' in df.columns:
         df['gold_log_return'] = np.log(df['gold_price'] / df['gold_price'].shift(1)).round(6)
-        
-        # Velocity and Signals for ALL probabilities
-        prob_cols = [c for c in df.columns if c.endswith('_prob')]
-        for col in prob_cols:
-            base = col.replace('_prob', '')
-            df[f"{base}_velocity"] = df[col].diff().round(2)
-            df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
-            df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
+        if 'gold_high' in df.columns and 'gold_low' in df.columns:
+            tr = pd.concat([df['gold_high'] - df['gold_low'], abs(df['gold_high'] - df['gold_price'].shift(1)), abs(df['gold_low'] - df['gold_price'].shift(1))], axis=1).max(axis=1)
+            df['gold_atr_14'] = tr.rolling(14, min_periods=1).mean().round(2)
 
-    # 4. NEAT GROUPING & JUNK OMITTING
-    y_cols = ['gold_price', 'oil_wti', 'silver', 'usd_etf', 'usd_volume', 'copper_price', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
-    f_cols = ['inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
-    sent_cols = ['btc_sentiment', 'geopol_ita', 'skew_index', 'eastern_bid', 'gold_log_return']
+    # Signal Velocity
+    prob_cols = [c for c in df.columns if c.endswith('_prob')]
+    for col in prob_cols:
+        base = col.replace('_prob', '')
+        df[f"{base}_velocity"] = df[col].diff().round(2)
+        df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
+        df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
+
+    # FINAL NEAT GROUPING & OMITTING
+    y_core = ['gold_price', 'oil_wti', 'silver', 'usd_etf', 'usd_volume', 'copper_price', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
+    macro = ['btc_sentiment', 'geopol_ita', 'gold_log_return', 'inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
     
-    # Omit list (redundant/old names)
-    omit = ['oil_price', 'gold_miners_price', 'gold_vix_price', 'nyt_gold_hits', 'news_sentiment_score', 'nyt_recession_hits', 'oil_100_depth', 'oil_105_depth', 'oil_105_spread', 'oil_110_depth', 'oil_110_spread']
+    # Omit specifically redundant/empty ones
+    omit = ['oil_price', 'gold_miners_price', 'gold_vix_price', 'nyt_gold_hits', 'news_sentiment_score', 'nyt_recession_hits', 'oil_100_depth', 'oil_105_spread', 'oil_110_spread']
     
-    p_cols = sorted([c for c in df.columns if c not in ['date'] + y_cols + f_cols + sent_cols + omit])
+    p_cols = sorted([c for c in df.columns if c not in ['date'] + y_core + macro + omit])
     
-    df = df[['date'] + y_cols + sent_cols + f_cols + p_cols]
+    df = df[['date'] + y_core + macro + p_cols]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 Neat CSV Complete. Redundancy purged.")
+    logging.info(f"🏁 MASTER FIX APPLIED. Redundancy deleted.")
 
 if __name__ == "__main__": main()
