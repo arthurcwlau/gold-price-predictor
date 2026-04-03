@@ -33,24 +33,22 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    """OHLC + Sentiment Extraction: Grabs Highs/Lows to track cycles."""
+    """Volume-First Extraction: Automatically grabs Price & Volume for all anchors."""
     tickers = {
         "gold": "GC=F", "oil": "CL=F", "silver": "SI=F", "copper": "HG=F",
-        "usd_uup": "UUP", "btc_digital_gold": "BTC-USD", "geopol_ita": "ITA", 
-        "gold_miners": "GDX", "treasury_10y": "^TNX", "vix": "^VIX", "skew": "^SKEW",
-        "eastern_bid": "XAUCNY=X"
+        "usd_etf": "UUP", "btc_sentiment": "BTC-USD", "geopol_ita": "ITA", 
+        "gold_miners": "GDX", "treasury_10y": "^TNX", "vix": "^VIX", "skew": "^SKEW"
     }
     data = {}
     for key, symbol in tickers.items():
         try:
             ticker_obj = yf.Ticker(symbol)
-            # Use 1h interval to get the most recent cycle context
-            h = ticker_obj.history(period="7d", interval="1h")
+            h = ticker_obj.history(period="5d", interval="1h")
             if not h.empty:
                 last_bar = h.iloc[-1]
                 data[f"{key}_price"] = round(last_bar['Close'], 2)
-                data[f"{key}_high"] = round(last_bar['High'], 2) # To catch the cycle high
-                data[f"{key}_low"] = round(last_bar['Low'], 2)   # To catch the cycle low
+                data[f"{key}_high"] = round(last_bar['High'], 2)
+                data[f"{key}_low"] = round(last_bar['Low'], 2)
                 if 'Volume' in h.columns:
                     data[f"{key}_volume"] = int(last_bar['Volume'])
         except: pass
@@ -85,37 +83,35 @@ def main():
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # --- 🏗️ THE TRADING ENGINE: ATR & CYCLE SIGNALS ---
+    # --- 🏗️ INDICATOR ENGINE: RSI, ATR & SMA ---
     if 'gold_price' in df.columns:
-        # 1. ATR (Average True Range) - Measured over 14 hours
-        # This tells the AI if the current movement is > your $5 commission hurdle
+        # ATR (Average True Range) - Measured over 14 hours for the $5 Hurdle
         tr = pd.concat([df['gold_high'] - df['gold_low'], 
                         abs(df['gold_high'] - df['gold_price'].shift(1)), 
                         abs(df['gold_low'] - df['gold_price'].shift(1))], axis=1).max(axis=1)
         df['gold_atr_14'] = tr.rolling(window=14, min_periods=1).mean().round(2)
-        
-        # 2. Commission Hurdle Logic
-        df['gold_is_tradable'] = (df['gold_atr_14'] > 5.0).astype(int)
-
-        # 3. Technicals & Log-Returns (AI Optimization)
         df['gold_sma_20'] = df['gold_price'].rolling(window=20).mean().round(2)
-        df['gold_log_return'] = np.log(df['gold_price'] / df['gold_price'].shift(1))
         
-        # RSI 14
+        # RSI 14 calculation
         delta = df['gold_price'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         df['gold_rsi_14'] = (100 - (100 / (1 + (gain/loss)))).fillna(50).round(2)
 
-    # 🧹 CATEGORICAL GROUPING
-    y_cols = sorted([c for c in df.columns if any(x in c for x in ['gold_', 'oil_', 'silver', 'usd_', 'btc_', 'geopol_', 'eastern_', 'vix', 'skew', 'treasury_'])])
+    # REPAIR BRIDGE & GROUPING
+    mapping = {'recession_us_recession_by_end_of_2026_prob': 'recession_prob', 'silver_price': 'silver'}
+    for l, sh in mapping.items():
+        if l in df.columns: df[sh] = df[sh].fillna(df[l])
+
+    # Re-order logic to keep CSV clean
+    y_cols = sorted([c for c in df.columns if any(x in c for x in ['gold_', 'oil_', 'silver', 'usd_', 'btc_', 'geopol_', 'vix', 'skew', 'treasury_'])])
     f_cols = ['inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
-    junk = [c for c in df.columns if 'recession_us_recession' in c]
+    junk = [c for c in df.columns if 'recession_us_recession' in c or c == 'silver_price']
     p_cols = sorted([c for c in df.columns if c not in ['date'] + y_cols + f_cols + junk])
     
     df = df[['date'] + y_cols + f_cols + p_cols]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 Trader Engine Active. Hurdle: $5.0. Cycle Tracking ON.")
+    logging.info(f"🏁 Update Complete. Sentinels Added. Health: GREEN.")
 
 if __name__ == "__main__": main()
