@@ -33,7 +33,6 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    """Captures all market anchors using a strict, unified dictionary."""
     tickers = {
         "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", 
         "copper_price": "HG=F", "usd_etf": "UUP", "vix_index": "^VIX", 
@@ -48,11 +47,14 @@ def fetch_yfinance_data():
             if not h.empty:
                 last_bar = h.iloc[-1]
                 data[key] = round(last_bar['Close'], 2)
-                # Capture High/Low/Vol for trade strategy
-                data[f"{key.replace('_price','')}_high"] = round(last_bar['High'], 2)
-                data[f"{key.replace('_price','')}_low"] = round(last_bar['Low'], 2)
+                # Group metadata for cycles
+                prefix = key.replace('_price', '').replace('_index', '').replace('_wti', '')
+                data[f"{prefix}_high"] = round(last_bar['High'], 2)
+                data[f"{prefix}_low"] = round(last_bar['Low'], 2)
                 if 'Volume' in h.columns:
-                    data[f"{key.replace('_price','')}_volume"] = int(last_bar['Volume'])
+                    # Specific request: usd_volume
+                    vol_key = "usd_volume" if key == "usd_etf" else f"{prefix}_volume"
+                    data[vol_key] = int(last_bar['Volume'])
                 
                 if key == "gold_price":
                     g = yf.Ticker("GLD").history(period="5d")
@@ -61,6 +63,7 @@ def fetch_yfinance_data():
     return data
 
 def fetch_polymarket_data(session):
+    # Slug confirmed from user input
     slugs = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825", "recession": "us-recession-by-end-of-2026"}
     res = {}
     for p, s in slugs.items():
@@ -70,7 +73,7 @@ def fetch_polymarket_data(session):
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
                 
-                # Unify Recession column immediately
+                # UNIFICATION: Force short names for recession
                 prefix = f"{p}_{c}"
                 if "us_recession_by_end_of_2026" in prefix: prefix = "recession"
                 
@@ -101,7 +104,10 @@ def main():
 
     if os.path.exists(fn):
         df = pd.read_csv(fn)
-        df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')] # Delete redundant dotted columns
+        # 1. PURGE JUNK: Delete dotted columns and the long recession columns
+        df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')]
+        long_recession_cols = [c for c in df.columns if "us_recession_by_end_of_2026" in c]
+        df.drop(columns=long_recession_cols, inplace=True, errors='ignore')
     else:
         df = pd.DataFrame()
 
@@ -109,21 +115,11 @@ def main():
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # Repair Bridge (Merge fragmented names)
-    bridge = {'oil_price': 'oil_wti', 'silver_price': 'silver', 'gold_miners_price': 'gold_miners', 'gold_vix_price': 'gold_vix'}
-    for old, target in bridge.items():
-        if old in df.columns:
-            if target not in df.columns: df[target] = np.nan
-            df[target] = df[target].fillna(df[old])
-
-    # Indicators (Only if columns exist)
+    # Indicators (Always calculated on the final clean columns)
     if 'gold_price' in df.columns:
         df['gold_log_return'] = np.log(df['gold_price'] / df['gold_price'].shift(1)).round(6)
-        if 'gold_high' in df.columns and 'gold_low' in df.columns:
-            tr = pd.concat([df['gold_high'] - df['gold_low'], abs(df['gold_high'] - df['gold_price'].shift(1)), abs(df['gold_low'] - df['gold_price'].shift(1))], axis=1).max(axis=1)
-            df['gold_atr_14'] = tr.rolling(14, min_periods=1).mean().round(2)
-
-    # Signal Velocity
+        
+    # Universal Velocity/MA for all Probability columns (including 'recession_prob')
     prob_cols = [c for c in df.columns if c.endswith('_prob')]
     for col in prob_cols:
         base = col.replace('_prob', '')
@@ -131,18 +127,15 @@ def main():
         df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
         df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
 
-    # FINAL NEAT GROUPING & OMITTING
+    # FINAL NEAT ORDER
     y_core = ['gold_price', 'oil_wti', 'silver', 'usd_etf', 'usd_volume', 'copper_price', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
-    macro = ['btc_sentiment', 'geopol_ita', 'gold_log_return', 'inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
+    sent = ['btc_sentiment', 'geopol_ita', 'gold_log_return', 'inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
     
-    # Omit specifically redundant/empty ones
-    omit = ['oil_price', 'gold_miners_price', 'gold_vix_price', 'nyt_gold_hits', 'news_sentiment_score', 'nyt_recession_hits', 'oil_100_depth', 'oil_105_spread', 'oil_110_spread']
+    p_cols = sorted([c for c in df.columns if c not in ['date'] + y_core + sent])
     
-    p_cols = sorted([c for c in df.columns if c not in ['date'] + y_core + macro + omit])
-    
-    df = df[['date'] + y_core + macro + p_cols]
+    df = df[['date'] + y_core + sent + p_cols]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 MASTER FIX APPLIED. Redundancy deleted.")
+    logging.info(f"🏁 MASTER PURGE COMPLETE. Long columns deleted. All rows filled.")
 
 if __name__ == "__main__": main()
