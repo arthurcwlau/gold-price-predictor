@@ -33,6 +33,7 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
+    """Captures OHLCV and forces specific header names to match user preference."""
     tickers = {
         "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", 
         "copper_price": "HG=F", "usd_etf": "UUP", "vix_index": "^VIX", 
@@ -45,16 +46,14 @@ def fetch_yfinance_data():
             t = yf.Ticker(symbol)
             h = t.history(period="5d", interval="1h")
             if not h.empty:
-                last_bar = h.iloc[-1]
-                data[key] = round(last_bar['Close'], 2)
-                # Group metadata for cycles
-                prefix = key.replace('_price', '').replace('_index', '').replace('_wti', '')
-                data[f"{prefix}_high"] = round(last_bar['High'], 2)
-                data[f"{prefix}_low"] = round(last_bar['Low'], 2)
-                if 'Volume' in h.columns:
-                    # Specific request: usd_volume
-                    vol_key = "usd_volume" if key == "usd_etf" else f"{prefix}_volume"
-                    data[vol_key] = int(last_bar['Volume'])
+                last = h.iloc[-1]
+                data[key] = round(last['Close'], 2)
+                # STRICT MAPPING: Ensures High/Low/Vol land in your preferred headers
+                data[f"{key}_high"] = round(last['High'], 2)
+                data[f"{key}_low"] = round(last['Low'], 2)
+                # Specific volume naming for USD and VIX
+                vol_key = "usd_volume" if key == "usd_etf" else f"{key}_volume"
+                data[vol_key] = int(last['Volume']) if 'Volume' in h.columns else 0
                 
                 if key == "gold_price":
                     g = yf.Ticker("GLD").history(period="5d")
@@ -63,7 +62,6 @@ def fetch_yfinance_data():
     return data
 
 def fetch_polymarket_data(session):
-    # Slug confirmed from user input
     slugs = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825", "recession": "us-recession-by-end-of-2026"}
     res = {}
     for p, s in slugs.items():
@@ -73,9 +71,9 @@ def fetch_polymarket_data(session):
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
                 
-                # UNIFICATION: Force short names for recession
+                # FORCE UNIFICATION: Recession slugs
                 prefix = f"{p}_{c}"
-                if "us_recession_by_end_of_2026" in prefix: prefix = "recession"
+                if "us_recession" in prefix: prefix = "recession"
                 
                 prices = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
                 if prices: res[f"{prefix}_prob"] = round(float(prices[0]) * 100, 2)
@@ -84,7 +82,7 @@ def fetch_polymarket_data(session):
                 res[f"{prefix}_oi"] = round(float(m.get('openInterest', 0)), 2)
                 
                 tks = m.get('clobTokenIds')
-                if tks:
+                if tks and float(m.get('liquidity', 0)) > 0:
                     tid = tks[0] if isinstance(tks, list) else json.loads(tks)[0]
                     bk = session.get(f"https://clob.polymarket.com/book?token_id={tid}", timeout=10).json()
                     if bk.get('bids') and bk.get('asks'):
@@ -104,10 +102,10 @@ def main():
 
     if os.path.exists(fn):
         df = pd.read_csv(fn)
-        # 1. PURGE JUNK: Delete dotted columns and the long recession columns
+        # REMOVE REDUNDANCY: Delete dotted columns and old ghost names
         df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')]
-        long_recession_cols = [c for c in df.columns if "us_recession_by_end_of_2026" in c]
-        df.drop(columns=long_recession_cols, inplace=True, errors='ignore')
+        old_ghosts = ['oil_high', 'oil_low', 'oil_volume', 'vix_high', 'vix_low', 'vix_volume', 'usd_volume_old']
+        df.drop(columns=[c for c in old_ghosts if c in df.columns], inplace=True, errors='ignore')
     else:
         df = pd.DataFrame()
 
@@ -115,11 +113,10 @@ def main():
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # Indicators (Always calculated on the final clean columns)
+    # Indicators & Signal Velocity
     if 'gold_price' in df.columns:
         df['gold_log_return'] = np.log(df['gold_price'] / df['gold_price'].shift(1)).round(6)
-        
-    # Universal Velocity/MA for all Probability columns (including 'recession_prob')
+    
     prob_cols = [c for c in df.columns if c.endswith('_prob')]
     for col in prob_cols:
         base = col.replace('_prob', '')
@@ -127,15 +124,15 @@ def main():
         df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
         df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
 
-    # FINAL NEAT ORDER
-    y_core = ['gold_price', 'oil_wti', 'silver', 'usd_etf', 'usd_volume', 'copper_price', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
-    sent = ['btc_sentiment', 'geopol_ita', 'gold_log_return', 'inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
+    # FINAL NEAT SORTING
+    y_core = sorted([c for c in df.columns if any(x in c for x in ['gold_', 'oil_wti', 'silver', 'usd_', 'vix_index', 'copper_price', 'treasury_10y', 'btc_sentiment', 'geopol_ita'])])
+    f_core = ['inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
     
-    p_cols = sorted([c for c in df.columns if c not in ['date'] + y_core + sent])
+    p_cols = sorted([c for c in df.columns if c not in ['date'] + y_core + f_core])
     
-    df = df[['date'] + y_core + sent + p_cols]
+    df = df[['date'] + y_core + f_core + p_cols]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 MASTER PURGE COMPLETE. Long columns deleted. All rows filled.")
+    logging.info(f"🏁 MASTER UNIFICATION COMPLETE. Redundancy deleted.")
 
 if __name__ == "__main__": main()
