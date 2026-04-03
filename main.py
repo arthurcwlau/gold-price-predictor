@@ -33,10 +33,10 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    """Captures OHLCV using your preferred reference names."""
+    """Captures OHLCV and uses standardized keys."""
     tickers = {
-        "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", "copper_price": "HG=F",
-        "usd_etf": "UUP", "vix_index": "^VIX", "gold_vix": "^GVZ", "real_yield_proxy": "TIP",
+        "gold": "GC=F", "oil": "CL=F", "silver": "SI=F", "copper": "HG=F",
+        "usd_etf": "UUP", "vix": "^VIX", "gold_vix": "^GVZ", "real_yield_proxy": "TIP",
         "gold_miners": "GDX", "treasury_10y": "^TNX", "btc_sentiment": "BTC-USD", 
         "geopol_ita": "ITA", "skew_index": "^SKEW", "eastern_bid": "XAUCNY=X"
     }
@@ -47,13 +47,16 @@ def fetch_yfinance_data():
             h = t.history(period="7d", interval="1h")
             if not h.empty:
                 last = h.iloc[-1]
-                data[key] = round(last['Close'], 2)
+                # Standardizing output names to match your preferred header
+                pref = f"{key}_price" if key in ["gold", "oil", "copper"] else key
+                data[pref] = round(last['Close'], 2)
                 data[f"{key}_high"] = round(last['High'], 2)
                 data[f"{key}_low"] = round(last['Low'], 2)
                 if 'Volume' in h.columns: data[f"{key}_volume"] = int(last['Volume'])
                 
-                # Internal Volume Logic
-                if key == "gold_price":
+                # Special cases to maintain your existing column names
+                if key == "oil": data["oil_wti"] = data["oil_price"]
+                if key == "gold":
                     gld = yf.Ticker("GLD").history(period="5d")
                     if not gld.empty: data["gld_etf_vol"] = int(gld['Volume'].iloc[-1])
         except: pass
@@ -68,19 +71,17 @@ def fetch_polymarket_data(session):
             for m in d[0]['markets']:
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
-                
                 prices = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
                 if prices: res[f"{p}_{c}_prob"] = round(float(prices[0]) * 100, 2)
                 res[f"{p}_{c}_vol"] = round(float(m.get('volume', 0)), 2)
                 res[f"{p}_{c}_oi"] = round(float(m.get('openInterest', 0)), 2)
-                
                 tokens = m.get('clobTokenIds')
                 if tokens:
                     tid = tokens[0] if isinstance(tokens, list) else json.loads(tokens)[0]
                     bk = session.get(f"https://clob.polymarket.com/book?token_id={tid}", timeout=10).json()
                     if bk.get('bids') and bk.get('asks'):
                         res[f"{p}_{c}_spread"] = round(float(bk['asks'][0]['price']) - float(bk['bids'][0]['price']), 4)
-                        res[f"{p}_{c}_depth"] = round(sum([float(x['size']) for x in bk['bids'][:5]]), 2)
+                        res[f"{p}_{c}_depth"] = round(sum([float(x['size']) for x in book['bids'][:5]]), 2)
                         res[f"{p}_{c}_liq"] = round(float(m.get('liquidity', 0)), 2)
         except: pass
     return res
@@ -94,10 +95,9 @@ def main():
         row.update(fetch_fred_data(s, os.getenv("FRED_API_KEY")))
         row.update(fetch_polymarket_data(s))
 
-    # 1. LOAD & DEDUPLICATE COLUMNS (Fixes the .1, .2, .3 issues)
     if os.path.exists(fn):
         df = pd.read_csv(fn)
-        # Remove any columns ending in .1, .2, .3 caused by previous sync errors
+        # 1. CLEANUP: Remove duplicate numbered columns (e.g., .1, .2)
         df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')]
     else:
         df = pd.DataFrame()
@@ -107,39 +107,44 @@ def main():
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # 2. THE REPAIR BRIDGE (Fills the empty gaps from naming changes)
+    # 2. REPAIR BRIDGE: Map fragmented names to unified headers
     bridge = {
-        'silver_price': 'silver', 'oil_price': 'oil_wti', 
-        'btc_digital_gold_price': 'btc_sentiment', 'usd_etf_price': 'usd_etf',
-        'recession_us_recession_by_end_of_2026_prob': 'recession_prob'
+        'copper_price_high': 'copper_high', 'copper_price_low': 'copper_low', 'copper_price_volume': 'copper_volume',
+        'oil_wti_high': 'oil_high', 'oil_wti_low': 'oil_low', 'oil_wti_volume': 'oil_volume',
+        'silver_price': 'silver', 'recession_us_recession_by_end_of_2026_prob': 'recession_prob'
     }
     for old, target in bridge.items():
         if old in df.columns:
+            if target not in df.columns: df[target] = np.nan
             df[target] = df[target].fillna(df[old])
 
-    # 3. SIGNALS (Velocity/MA)
-    prob_cols = [c for c in df.columns if c.endswith('_prob')]
-    for col in prob_cols:
-        base = col.replace('_prob', '')
-        df[f"{base}_velocity"] = df[col].diff().round(2)
-        df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
-        df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
+    # 3. TRADING ENGINE: ATR, SMA, RSI
+    if 'gold_price' in df.columns:
+        tr = pd.concat([df['gold_high'] - df['gold_low'], 
+                        abs(df['gold_high'] - df['gold_price'].shift(1)), 
+                        abs(df['gold_low'] - df['gold_price'].shift(1))], axis=1).max(axis=1)
+        df['gold_atr_14'] = tr.rolling(window=14, min_periods=1).mean().round(2)
+        df['gold_sma_20'] = df['gold_price'].rolling(window=20, min_periods=1).mean().round(2)
+        delta = df['gold_price'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        df['gold_rsi_14'] = (100 - (100 / (1 + (gain/loss)))).fillna(50).round(2)
 
-    # 4. NEAT GROUPING (As Requested)
-    yfinance_core = ['gold_price', 'oil_wti', 'silver', 'copper_price', 'usd_etf', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
-    yfinance_ext = [c for c in df.columns if any(x in c for x in ['_high', '_low', '_volume']) and not any(p in c for p in ['gold_', 'oil_', 'fed_', 'recession_'])]
+    # 4. FINAL NEAT SORTING
+    core_yf = ['gold_price', 'oil_wti', 'silver', 'copper_price', 'usd_etf', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
+    meta_yf = sorted([c for c in df.columns if any(x in c for x in ['_high', '_low', '_volume']) and not any(p in c for p in ['gold_', 'oil_', 'fed_', 'recession_'])])
     
-    poly_list = sorted([c for c in df.columns if any(c.startswith(p) for p in ['gold_', 'oil_', 'fed_', 'recession_']) and c not in yfinance_core + yfinance_ext])
+    poly_list = sorted([c for c in df.columns if any(c.startswith(p) for p in ['gold_', 'oil_', 'fed_', 'recession_']) and c not in core_yf + meta_yf])
     
-    macro_sent = ['btc_sentiment', 'geopol_ita', 'skew_index', 'eastern_bid', 'inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
+    macro_sent = sorted(['btc_sentiment', 'geopol_ita', 'skew_index', 'eastern_bid', 'inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index'])
     
-    # Define Final Order
-    final_cols = ['date'] + yfinance_core + yfinance_ext + poly_list + macro_sent
-    # Filter to only existing columns and maintain order
-    df = df[[c for c in final_cols if c in df.columns]]
-
+    final_order = ['date'] + core_yf + meta_yf + poly_list + [c for c in macro_sent if c in df.columns]
+    # Drop the bridge sources now that data is moved
+    df.drop(columns=[c for c in bridge.keys() if c in df.columns], inplace=True)
+    
+    df = df[[c for c in final_order if c in df.columns]]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 Update Complete. Gaps filled and columns neatly sorted.")
+    logging.info(f"🏁 MASTER PULSE COMPLETE. Gaps repaired and columns sorted.")
 
 if __name__ == "__main__": main()
