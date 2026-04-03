@@ -2,21 +2,18 @@ name: Gold Pro Intelligence Pulse
 
 on:
   schedule:
-    - cron: '0 * * * *' # Runs every hour on the dot
-  workflow_dispatch:   # Allows you to run it manually via the Actions tab
+    - cron: '0 * * * *' # Every hour on the dot (Safest for yfinance)
+  workflow_dispatch:   # Manual trigger
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # CRITICAL: This gives the bot permission to save the CSV back to your repo
     permissions:
       contents: write
-    
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
         with:
-          # Fetches full history so the rebase/sync works perfectly
           fetch-depth: 0 
 
       - name: Setup Python
@@ -26,27 +23,18 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        # Optimized to only install what is necessary for the CSV engine
-        run: pip install pandas yfinance --upgrade requests
+        run: pip install pandas yfinance --upgrade requests numpy
 
-      - name: Run Analytics (Data Collection)
+      - name: Run Analytics
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
 
-      - name: Commit and Push Results
+      - name: Commit Results
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          
-          # 1. Stage the updated CSV
           git add gold_investment_pro.csv
-          
-          # 2. Commit locally FIRST (Fixes the "index contains uncommitted changes" error)
-          git commit -m "📊 Intelligence Pulse: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes to commit"
-          
-          # 3. Sync with any manual changes you made on GitHub.com
+          git commit -m "📊 Trader Engine Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
           git pull --rebase origin main
-          
-          # 4. Push the final synchronized data
           git push origin main
