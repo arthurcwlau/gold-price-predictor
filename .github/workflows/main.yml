@@ -2,8 +2,8 @@ name: Gold Pro Intelligence Pulse
 
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *' # Hourly update
+  workflow_dispatch:   # Manual trigger
 
 jobs:
   build:
@@ -23,18 +23,19 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install pandas yfinance --upgrade requests
+        # Added numpy for the log-return calculations
+        run: pip install pandas yfinance --upgrade requests numpy
 
       - name: Run Analytics
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
 
-      - name: Commit Results
+      - name: Commit and Push Results
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
           git add gold_investment_pro.csv
-          git commit -m "📊 Reverted to Stable Build: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
+          git commit -m "📊 Neat Intelligence Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
           git pull --rebase origin main
           git push origin main
