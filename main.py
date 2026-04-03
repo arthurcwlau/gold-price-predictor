@@ -33,7 +33,7 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    """Captures OHLCV using consistent naming to prevent ghost columns."""
+    """Captures OHLCV with standardized naming and Gold prioritization."""
     tickers = {
         "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", 
         "copper_price": "HG=F", "usd_etf": "UUP", "vix_index": "^VIX", 
@@ -48,13 +48,12 @@ def fetch_yfinance_data():
             if not h.empty:
                 last_bar = h.iloc[-1]
                 data[key] = round(last_bar['Close'], 2)
-                # Group metadata: Use the key itself as prefix to match existing headers
                 data[f"{key}_high"] = round(last_bar['High'], 2)
                 data[f"{key}_low"] = round(last_bar['Low'], 2)
                 
-                # Special Volume mapping to match your CSV
-                if key == "usd_etf": data["usd_volume"] = int(last_bar['Volume'])
-                else: data[f"{key}_volume"] = int(last_bar['Volume']) if 'Volume' in h.columns else 0
+                # Unified Volume Logic
+                vol_key = "usd_volume" if key == "usd_etf" else f"{key}_volume"
+                data[vol_key] = int(last_bar['Volume']) if 'Volume' in h.columns else 0
                 
                 if key == "gold_price":
                     g = yf.Ticker("GLD").history(period="5d")
@@ -99,45 +98,46 @@ def main():
         row.update(fetch_fred_data(s, os.getenv("FRED_API_KEY")))
         row.update(fetch_polymarket_data(s))
 
-    if os.path.exists(fn):
-        df = pd.read_csv(fn)
-        # 1. PURGE JUNK: Delete dotted columns and ghost names containing '_price_'
-        df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')]
-        ghosts = [c for c in df.columns if '_price_high' in c or '_price_low' in c or '_price_volume' in c]
-        df.drop(columns=ghosts, inplace=True, errors='ignore')
-    else:
-        df = pd.DataFrame()
-
+    df = pd.read_csv(fn) if os.path.exists(fn) else pd.DataFrame()
     df = pd.concat([df, pd.DataFrame([row])], ignore_index=True, sort=False)
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # Indicators (Always calculated on the final clean columns)
+    # --- 🧹 THE GOLD MASTER CLEANUP ---
+    # 1. Prune Ghost Columns (Renamed or dotted)
+    redundant = ['copper_high', 'copper_low', 'copper_volume', 'usd_volume_old', 'oil_high', 'oil_low', 'oil_volume']
+    redundant += [c for c in df.columns if any(x in c for x in ['_price_high', '_price_low', '_price_volume']) or re.search(r'\.\d+$', c)]
+    df.drop(columns=[c for c in redundant if c in df.columns], inplace=True, errors='ignore')
+
+    # 2. Indicators (Recalculated on clean data)
     if 'gold_price' in df.columns:
         df['gold_log_return'] = np.log(df['gold_price'] / df['gold_price'].shift(1)).round(6)
         if 'gold_price_high' in df.columns and 'gold_price_low' in df.columns:
              tr = pd.concat([df['gold_price_high'] - df['gold_price_low'], abs(df['gold_price_high'] - df['gold_price'].shift(1)), abs(df['gold_price_low'] - df['gold_price'].shift(1))], axis=1).max(axis=1)
              df['gold_atr_14'] = tr.rolling(14, min_periods=1).mean().round(2)
-    
-    prob_cols = [c for c in df.columns if c.endswith('_prob')]
-    for col in prob_cols:
-        base = col.replace('_prob', '')
-        df[f"{base}_velocity"] = df[col].diff().round(2)
-        df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
-        df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
 
-    # 3. NEAT SORTING (yfinance -> polymarket -> sentiments)
-    y_tickers = ['gold_price', 'oil_wti', 'silver', 'copper_price', 'usd_etf', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'treasury_10y', 'btc_sentiment', 'geopol_ita']
-    y_core = sorted([c for c in df.columns if any(x in c for x in y_tickers)])
+    # --- 🏗️ NEAT SORTING ---
+    # Priority 1: Gold Primary (Leftmost)
+    gold_main = ['gold_price', 'gold_price_high', 'gold_price_low', 'gold_price_volume']
+    gold_ext = sorted([c for c in df.columns if c.startswith('gold_') and c not in gold_main])
     
-    p_core = sorted([c for c in df.columns if any(c.startswith(p) for p in ['gold_', 'oil_', 'fed_', 'recession_']) and c not in y_core])
+    # Priority 2: Core Market (Other yfinance assets)
+    y_core = sorted([c for c in df.columns if any(x in c for x in ['oil_wti', 'silver', 'copper_price', 'usd_etf', 'usd_volume', 'vix_index', 'treasury_10y', 'btc_sentiment', 'geopol_ita', 'real_yield', 'skew']) and not c.startswith('gold')])
     
-    # "All other sentiments" includes FRED data and calculated indicators
-    sent_macro = sorted([c for c in df.columns if c not in ['date'] + y_core + p_core])
+    # Priority 3: Polymarket
+    p_core = sorted([c for c in df.columns if any(c.startswith(p) for p in ['fed_', 'recession_']) or (c.startswith('gold_') and any(x in c for x in ['_prob', '_liq', '_depth', '_spread']))])
+    # Filter p_core to remove things already in gold_ext
+    p_core = [c for c in p_core if c not in gold_ext]
+
+    # Priority 4: All Remaining (FRED Macro & Signals)
+    others = sorted([c for c in df.columns if c not in ['date'] + gold_main + gold_ext + y_core + p_core])
     
-    df = df[['date'] + y_core + p_core + sent_macro]
+    # Final Order Assembly
+    final_order = ['date'] + gold_main + gold_ext + y_core + p_core + others
+    df = df[[c for c in final_order if c in df.columns]]
+
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 MASTER UNIFICATION & SORTING COMPLETE.")
+    logging.info(f"🏁 MASTER SORTING COMPLETE. Gold is Leftmost. Gaps closed.")
 
 if __name__ == "__main__": main()
