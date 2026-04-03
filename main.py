@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import os
 import json
 import re
+import numpy as np
 import logging
 
 # --- 🛰️ SYSTEM CONFIGURATION ---
@@ -12,14 +13,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def fetch_fred_data(session, api_key):
     if not api_key or api_key == "YOUR_ACTUAL_KEY_HERE": return {}
-    # Added: Trade Weighted Dollar (Global Confidence) & Consumer Sentiment (Domestic Faith)
     series = {
-        "inflation_expectation": "T10YIE",
-        "yield_curve_spread": "T10Y2Y",
-        "real_yield_10y": "DFII10",
-        "fed_balance_sheet": "WALCL",
-        "credit_stress_spread": "BAMLH0A0HYM2",
-        "usd_global_confidence": "DTWEXBGS", 
+        "inflation_expectation": "T10YIE", "yield_curve_spread": "T10Y2Y",
+        "real_yield_10y": "DFII10", "fed_balance_sheet": "WALCL",
+        "credit_stress_spread": "BAMLH0A0HYM2", "usd_global_confidence": "DTWEXBGS", 
         "usd_sentiment_index": "UMCSENT"
     }
     data = {}
@@ -36,24 +33,26 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    # SWAP: dxy_index (Ticker) -> usd_etf (UUP) for real Volume/Sentiments
+    """OHLC + Sentiment Extraction: Grabs Highs/Lows to track cycles."""
     tickers = {
-        "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", 
-        "copper_price": "HG=F", "usd_etf": "UUP", "vix_index": "^VIX", 
-        "gold_vix": "^GVZ", "real_yield_proxy": "TIP", "gold_miners": "GDX", "treasury_10y": "^TNX"
+        "gold": "GC=F", "oil": "CL=F", "silver": "SI=F", "copper": "HG=F",
+        "usd_uup": "UUP", "btc_digital_gold": "BTC-USD", "geopol_ita": "ITA", 
+        "gold_miners": "GDX", "treasury_10y": "^TNX", "vix": "^VIX", "skew": "^SKEW",
+        "eastern_bid": "XAUCNY=X"
     }
     data = {}
     for key, symbol in tickers.items():
         try:
-            h = yf.Ticker(symbol).history(period="5d")
+            ticker_obj = yf.Ticker(symbol)
+            # Use 1h interval to get the most recent cycle context
+            h = ticker_obj.history(period="7d", interval="1h")
             if not h.empty:
-                data[key] = round(h['Close'].iloc[-1], 2)
-                # Capture Volume for Dollar Confidence
-                if key == "usd_etf":
-                    data["usd_volume"] = int(h['Volume'].iloc[-1])
-                if key == "gold_price":
-                    g = yf.Ticker("GLD").history(period="5d")
-                    if not g.empty: data["gld_etf_vol"] = int(g['Volume'].iloc[-1])
+                last_bar = h.iloc[-1]
+                data[f"{key}_price"] = round(last_bar['Close'], 2)
+                data[f"{key}_high"] = round(last_bar['High'], 2) # To catch the cycle high
+                data[f"{key}_low"] = round(last_bar['Low'], 2)   # To catch the cycle low
+                if 'Volume' in h.columns:
+                    data[f"{key}_volume"] = int(last_bar['Volume'])
         except: pass
     return data
 
@@ -69,15 +68,7 @@ def fetch_polymarket_data(session):
                 pr = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
                 if pr: res[f"{p}_{c}_prob"] = round(float(pr[0]) * 100, 2)
                 res[f"{p}_{c}_vol"] = round(float(m.get('volume', 0)), 2)
-                res[f"{p}_{c}_liq"] = round(float(m.get('liquidity', 0)), 2)
                 res[f"{p}_{c}_oi"] = round(float(m.get('openInterest', 0)), 2)
-                tks = m.get('clobTokenIds')
-                if tks:
-                    tid = tks[0] if isinstance(tks, list) else json.loads(tks)[0]
-                    bk = session.get(f"https://clob.polymarket.com/book?token_id={tid}", timeout=10).json()
-                    if bk.get('bids') and bk.get('asks'):
-                        res[f"{p}_{c}_spread"] = round(float(bk['asks'][0]['price']) - float(bk['bids'][0]['price']), 4)
-                        res[f"{p}_{c}_depth"] = round(sum([float(x['size']) for x in bk['bids'][:5]]), 2)
         except: pass
     return res
 
@@ -86,36 +77,45 @@ def main():
     with requests.Session() as s:
         s.headers.update({"User-Agent": "Mozilla/5.0"})
         row = {"date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M Z")}
-        row.update(fetch_fred_data(s, os.getenv("FRED_API_KEY")))
         row.update(fetch_yfinance_data())
+        row.update(fetch_fred_data(s, os.getenv("FRED_API_KEY")))
         row.update(fetch_polymarket_data(s))
 
     df = pd.concat([pd.read_csv(fn) if os.path.exists(fn) else pd.DataFrame(), pd.DataFrame([row])], ignore_index=True)
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # Repair Bridge
-    mapping = {'recession_us_recession_by_end_of_2026_prob': 'recession_prob', 'silver_price': 'silver'}
-    for long, short in mapping.items():
-        if long in df.columns: df[short] = df[short].fillna(df[long])
+    # --- 🏗️ THE TRADING ENGINE: ATR & CYCLE SIGNALS ---
+    if 'gold_price' in df.columns:
+        # 1. ATR (Average True Range) - Measured over 14 hours
+        # This tells the AI if the current movement is > your $5 commission hurdle
+        tr = pd.concat([df['gold_high'] - df['gold_low'], 
+                        abs(df['gold_high'] - df['gold_price'].shift(1)), 
+                        abs(df['gold_low'] - df['gold_price'].shift(1))], axis=1).max(axis=1)
+        df['gold_atr_14'] = tr.rolling(window=14, min_periods=1).mean().round(2)
+        
+        # 2. Commission Hurdle Logic
+        df['gold_is_tradable'] = (df['gold_atr_14'] > 5.0).astype(int)
 
-    # Signals
-    prob_cols = [c for c in df.columns if c.endswith('_prob')]
-    for col in prob_cols:
-        base = col.replace('_prob', '')
-        df[f"{base}_velocity"] = df[col].diff().round(2)
-        df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
-        df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
+        # 3. Technicals & Log-Returns (AI Optimization)
+        df['gold_sma_20'] = df['gold_price'].rolling(window=20).mean().round(2)
+        df['gold_log_return'] = np.log(df['gold_price'] / df['gold_price'].shift(1))
+        
+        # RSI 14
+        delta = df['gold_price'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        df['gold_rsi_14'] = (100 - (100 / (1 + (gain/loss)))).fillna(50).round(2)
 
-    # Grouping
-    y_cols = ['gold_price', 'oil_wti', 'silver', 'usd_etf', 'usd_volume', 'copper_price', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
+    # 🧹 CATEGORICAL GROUPING
+    y_cols = sorted([c for c in df.columns if any(x in c for x in ['gold_', 'oil_', 'silver', 'usd_', 'btc_', 'geopol_', 'eastern_', 'vix', 'skew', 'treasury_'])])
     f_cols = ['inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
-    junk = [c for c in df.columns if 'recession_us_recession' in c or c == 'silver_price' or c == 'dxy_index' or c == 'dxy_vol']
+    junk = [c for c in df.columns if 'recession_us_recession' in c]
     p_cols = sorted([c for c in df.columns if c not in ['date'] + y_cols + f_cols + junk])
     
     df = df[['date'] + y_cols + f_cols + p_cols]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 System Check Passed. USD Sentiment Anchors Added.")
+    logging.info(f"🏁 Trader Engine Active. Hurdle: $5.0. Cycle Tracking ON.")
 
 if __name__ == "__main__": main()
