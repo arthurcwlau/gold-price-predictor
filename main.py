@@ -33,7 +33,7 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    """Captures OHLCV and forces the explicit naming requested by the user."""
+    """Captures OHLCV and forces specific header names to match user preference."""
     tickers = {
         "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", 
         "copper_price": "HG=F", "usd_etf": "UUP", "vix_index": "^VIX", 
@@ -46,13 +46,14 @@ def fetch_yfinance_data():
             t = yf.Ticker(symbol)
             h = t.history(period="5d", interval="1h")
             if not h.empty:
-                last_bar = h.iloc[-1]
-                data[key] = round(last_bar['Close'], 2)
-                # Explicit Cycle Naming
-                base = key.replace('_index', '').replace('_wti', '').replace('_etf', '').replace('_price', '')
-                data[f"{base}_price_high"] = round(last_bar['High'], 2)
-                data[f"{base}_price_low"] = round(last_bar['Low'], 2)
-                data[f"{base}_price_volume"] = int(last_bar['Volume']) if 'Volume' in h.columns else 0
+                last = h.iloc[-1]
+                data[key] = round(last['Close'], 2)
+                # STRICT MAPPING: Ensures High/Low/Vol land in your preferred headers
+                data[f"{key}_high"] = round(last['High'], 2)
+                data[f"{key}_low"] = round(last['Low'], 2)
+                # Specific volume naming for USD and VIX
+                vol_key = "usd_volume" if key == "usd_etf" else f"{key}_volume"
+                data[vol_key] = int(last['Volume']) if 'Volume' in h.columns else 0
                 
                 if key == "gold_price":
                     g = yf.Ticker("GLD").history(period="5d")
@@ -70,6 +71,7 @@ def fetch_polymarket_data(session):
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
                 
+                # FORCE UNIFICATION: Recession slugs
                 prefix = f"{p}_{c}"
                 if "us_recession" in prefix: prefix = "recession"
                 
@@ -100,10 +102,10 @@ def main():
 
     if os.path.exists(fn):
         df = pd.read_csv(fn)
-        # Cleanup: Force delete redundant old ghost names to keep it neat
-        old_ghosts = ['oil_high', 'oil_low', 'oil_volume', 'gold_high', 'gold_low', 'gold_volume', 'vix_high', 'vix_low', 'usd_volume']
-        df.drop(columns=[c for c in old_ghosts if c in df.columns], inplace=True, errors='ignore')
+        # REMOVE REDUNDANCY: Delete dotted columns and old ghost names
         df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')]
+        old_ghosts = ['oil_high', 'oil_low', 'oil_volume', 'vix_high', 'vix_low', 'vix_volume', 'usd_volume_old']
+        df.drop(columns=[c for c in old_ghosts if c in df.columns], inplace=True, errors='ignore')
     else:
         df = pd.DataFrame()
 
@@ -123,7 +125,7 @@ def main():
         df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
 
     # FINAL NEAT SORTING
-    y_core = sorted([c for c in df.columns if any(x in c for x in ['gold_price', 'oil_wti', 'silver', 'usd_etf', 'vix_index', 'copper_price', 'treasury_10y', 'btc_sentiment', 'geopol_ita'])])
+    y_core = sorted([c for c in df.columns if any(x in c for x in ['gold_', 'oil_wti', 'silver', 'usd_', 'vix_index', 'copper_price', 'treasury_10y', 'btc_sentiment', 'geopol_ita'])])
     f_core = ['inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
     
     p_cols = sorted([c for c in df.columns if c not in ['date'] + y_core + f_core])
@@ -131,6 +133,6 @@ def main():
     df = df[['date'] + y_core + f_core + p_cols]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 MASTER UNIFICATION COMPLETE. Gold High/Low/Vol explicitly captured.")
+    logging.info(f"🏁 MASTER UNIFICATION COMPLETE. Redundancy deleted.")
 
 if __name__ == "__main__": main()
