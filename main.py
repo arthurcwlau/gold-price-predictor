@@ -60,18 +60,25 @@ def fetch_polymarket_data(session):
             for m in d[0]['markets']:
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
+                
+                # Unify the recession name immediately during fetch
+                prefix = f"{p}_{c}"
+                if "us_recession_by_end_of_2026" in prefix:
+                    prefix = "recession"
+                
                 pr = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
-                if pr: res[f"{p}_{c}_prob"] = round(float(pr[0]) * 100, 2)
-                res[f"{p}_{c}_vol"] = round(float(m.get('volume', 0)), 2)
-                res[f"{p}_{c}_liq"] = round(float(m.get('liquidity', 0)), 2)
-                res[f"{p}_{c}_oi"] = round(float(m.get('openInterest', 0)), 2)
+                if pr: res[f"{prefix}_prob"] = round(float(pr[0]) * 100, 2)
+                res[f"{prefix}_vol"] = round(float(m.get('volume', 0)), 2)
+                res[f"{prefix}_liq"] = round(float(m.get('liquidity', 0)), 2)
+                res[f"{prefix}_oi"] = round(float(m.get('openInterest', 0)), 2)
+                
                 tks = m.get('clobTokenIds')
                 if tks:
                     tid = tks[0] if isinstance(tks, list) else json.loads(tks)[0]
                     bk = session.get(f"https://clob.polymarket.com/book?token_id={tid}", timeout=10).json()
                     if bk.get('bids') and bk.get('asks'):
-                        res[f"{p}_{c}_spread"] = round(float(bk['asks'][0]['price']) - float(bk['bids'][0]['price']), 4)
-                        res[f"{p}_{c}_depth"] = round(sum([float(x['size']) for x in bk['bids'][:5]]), 2)
+                        res[f"{prefix}_spread"] = round(float(bk['asks'][0]['price']) - float(bk['bids'][0]['price']), 4)
+                        res[f"{prefix}_depth"] = round(sum([float(x['size']) for x in bk['bids'][:5]]), 2)
         except: pass
     return res
 
@@ -88,12 +95,12 @@ def main():
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # Repair Bridge
-    mapping = {'recession_us_recession_by_end_of_2026_prob': 'recession_prob', 'silver_price': 'silver'}
+    # Repair Bridge for legacy columns
+    mapping = {'silver_price': 'silver'}
     for long, short in mapping.items():
         if long in df.columns: df[short] = df[short].fillna(df[long])
 
-    # Signals
+    # Calculate Signals (Velocity/MA) on the unified names
     prob_cols = [c for c in df.columns if c.endswith('_prob')]
     for col in prob_cols:
         base = col.replace('_prob', '')
@@ -101,16 +108,17 @@ def main():
         df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
         df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
 
-    # Grouping
+    # Definitive Column Grouping
     y_cols = ['gold_price', 'oil_wti', 'silver', 'usd_etf', 'usd_volume', 'copper_price', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
     f_cols = ['inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
     
-    # CLEANUP BLOCK: Only keep the columns that were in your "workable" version
-    p_cols = sorted([c for c in df.columns if c not in ['date'] + y_cols + f_cols and not any(x in c for x in ['_high', '_low', '_volume', '_atr', '_rsi', '_sma', '_is_tradable'])])
+    # Filter out any lingering long-form recession names or junk
+    junk = [c for c in df.columns if 'recession_us_recession' in c or c == 'silver_price' or c == 'dxy_index' or c == 'dxy_vol']
+    p_cols = sorted([c for c in df.columns if c not in ['date'] + y_cols + f_cols + junk])
     
     df = df[['date'] + y_cols + f_cols + p_cols]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 System Reverted. All new rows will be fully filled.")
+    logging.info(f"🏁 System Stabilized. Shortened Recession Metrics are now primary.")
 
 if __name__ == "__main__": main()
