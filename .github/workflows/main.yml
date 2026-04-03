@@ -2,8 +2,8 @@ name: Gold Pro Intelligence Pulse
 
 on:
   schedule:
-    - cron: '0 * * * *' # Every hour on the dot (Safest for yfinance)
-  workflow_dispatch:   # Manual trigger
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -35,6 +35,6 @@ jobs:
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
           git add gold_investment_pro.csv
-          git commit -m "📊 Trader Engine Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
+          git commit -m "📊 Neat Cycle Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
           git pull --rebase origin main
           git push origin main
