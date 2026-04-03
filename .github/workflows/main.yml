@@ -26,11 +26,11 @@ jobs:
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
-      - name: Commit and Push Results
+      - name: Commit Results
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
           git add gold_investment_pro.csv
-          git commit -m "📊 Intelligence Pulse (Unified): $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
+          git commit -m "📊 Master Unification: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
           git pull --rebase origin main
           git push origin main
