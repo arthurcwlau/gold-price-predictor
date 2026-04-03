@@ -33,36 +33,38 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    """Captures OHLCV for all assets."""
+    """Captures OHLCV using your preferred reference names."""
     tickers = {
-        "gold": "GC=F", "oil": "CL=F", "silver": "SI=F", "copper": "HG=F",
-        "usd_etf": "UUP", "btc_sentiment": "BTC-USD", "geopol_ita": "ITA", 
-        "gold_miners": "GDX", "treasury_10y": "^TNX", "vix": "^VIX", "skew": "^SKEW",
-        "eastern_bid": "XAUCNY=X"
+        "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", "copper_price": "HG=F",
+        "usd_etf": "UUP", "vix_index": "^VIX", "gold_vix": "^GVZ", "real_yield_proxy": "TIP",
+        "gold_miners": "GDX", "treasury_10y": "^TNX", "btc_sentiment": "BTC-USD", 
+        "geopol_ita": "ITA", "skew_index": "^SKEW", "eastern_bid": "XAUCNY=X"
     }
     data = {}
     for key, symbol in tickers.items():
         try:
-            ticker_obj = yf.Ticker(symbol)
-            h = ticker_obj.history(period="7d", interval="1h")
+            t = yf.Ticker(symbol)
+            h = t.history(period="7d", interval="1h")
             if not h.empty:
-                last_bar = h.iloc[-1]
-                data[f"{key}_price"] = round(last_bar['Close'], 2)
-                data[f"{key}_high"] = round(last_bar['High'], 2)
-                data[f"{key}_low"] = round(last_bar['Low'], 2)
-                if 'Volume' in h.columns:
-                    data[f"{key}_volume"] = int(last_bar['Volume'])
+                last = h.iloc[-1]
+                data[key] = round(last['Close'], 2)
+                data[f"{key}_high"] = round(last['High'], 2)
+                data[f"{key}_low"] = round(last['Low'], 2)
+                if 'Volume' in h.columns: data[f"{key}_volume"] = int(last['Volume'])
+                
+                # Internal Volume Logic
+                if key == "gold_price":
+                    gld = yf.Ticker("GLD").history(period="5d")
+                    if not gld.empty: data["gld_etf_vol"] = int(gld['Volume'].iloc[-1])
         except: pass
     return data
 
 def fetch_polymarket_data(session):
-    """Restores full Orderbook Depth, Spread, and Liquidity."""
     slugs = {"gold": "gc-settle-jun-2026", "oil": "cl-hit-jun-2026", "fed": "fed-decision-in-june-825", "recession": "us-recession-by-end-of-2026"}
     res = {}
     for p, s in slugs.items():
         try:
             d = session.get(f"https://gamma-api.polymarket.com/events?slug={s}", timeout=10).json()
-            if not d or not d[0].get('markets'): continue
             for m in d[0]['markets']:
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
@@ -72,15 +74,14 @@ def fetch_polymarket_data(session):
                 res[f"{p}_{c}_vol"] = round(float(m.get('volume', 0)), 2)
                 res[f"{p}_{c}_oi"] = round(float(m.get('openInterest', 0)), 2)
                 
-                # Orderbook logic (Restored)
                 tokens = m.get('clobTokenIds')
                 if tokens:
                     tid = tokens[0] if isinstance(tokens, list) else json.loads(tokens)[0]
-                    book = session.get(f"https://clob.polymarket.com/book?token_id={tid}", timeout=10).json()
-                    if book.get('bids') and book.get('asks'):
-                        res[f"{p}_{c}_spread"] = round(float(book['asks'][0]['price']) - float(book['bids'][0]['price']), 4)
+                    bk = session.get(f"https://clob.polymarket.com/book?token_id={tid}", timeout=10).json()
+                    if bk.get('bids') and bk.get('asks'):
+                        res[f"{p}_{c}_spread"] = round(float(bk['asks'][0]['price']) - float(bk['bids'][0]['price']), 4)
+                        res[f"{p}_{c}_depth"] = round(sum([float(x['size']) for x in bk['bids'][:5]]), 2)
                         res[f"{p}_{c}_liq"] = round(float(m.get('liquidity', 0)), 2)
-                        res[f"{p}_{c}_depth"] = round(sum([float(x['size']) for x in book['bids'][:5]]), 2)
         except: pass
     return res
 
@@ -93,54 +94,52 @@ def main():
         row.update(fetch_fred_data(s, os.getenv("FRED_API_KEY")))
         row.update(fetch_polymarket_data(s))
 
-    df = pd.concat([pd.read_csv(fn) if os.path.exists(fn) else pd.DataFrame(), pd.DataFrame([row])], ignore_index=True)
+    # 1. LOAD & DEDUPLICATE COLUMNS (Fixes the .1, .2, .3 issues)
+    if os.path.exists(fn):
+        df = pd.read_csv(fn)
+        # Remove any columns ending in .1, .2, .3 caused by previous sync errors
+        df = df.loc[:, ~df.columns.str.contains(r'\.\d+$')]
+    else:
+        df = pd.DataFrame()
+
+    df_new = pd.DataFrame([row])
+    df = pd.concat([df, df_new], ignore_index=True, sort=False)
     df['date'] = pd.to_datetime(df['date'])
     df = df.drop_duplicates('date').sort_values('date')
 
-    # --- 🏗️ TRADING ENGINE (ATR, SMA, RSI) ---
-    if 'gold_price' in df.columns:
-        tr = pd.concat([df['gold_high'] - df['gold_low'], 
-                        abs(df['gold_high'] - df['gold_price'].shift(1)), 
-                        abs(df['gold_low'] - df['gold_price'].shift(1))], axis=1).max(axis=1)
-        df['gold_atr_14'] = tr.rolling(window=14, min_periods=1).mean().round(2)
-        df['gold_sma_20'] = df['gold_price'].rolling(window=20, min_periods=1).mean().round(2)
-        
-        delta = df['gold_price'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        df['gold_rsi_14'] = (100 - (100 / (1 + (gain/loss)))).fillna(50).round(2)
-
-    # --- 🌉 THE REPAIR BRIDGE (Syncing old/new names) ---
-    mapping = {
-        'btc_digital_gold_price': 'btc_sentiment_price', 'btc_digital_gold_high': 'btc_sentiment_high',
-        'btc_digital_gold_low': 'btc_sentiment_low', 'btc_digital_gold_volume': 'btc_sentiment_volume',
+    # 2. THE REPAIR BRIDGE (Fills the empty gaps from naming changes)
+    bridge = {
+        'silver_price': 'silver', 'oil_price': 'oil_wti', 
+        'btc_digital_gold_price': 'btc_sentiment', 'usd_etf_price': 'usd_etf',
         'recession_us_recession_by_end_of_2026_prob': 'recession_prob'
     }
-    for old, current in mapping.items():
+    for old, target in bridge.items():
         if old in df.columns:
-            df[current] = df[current].fillna(df[old])
-            df.drop(columns=[old], inplace=True)
+            df[target] = df[target].fillna(df[old])
 
-    # --- 🧹 NEAT DISPLAY SORTING ---
-    # Group 1: Core yfinance (Price/OHLC/Vol/Technicals)
-    yfinance_main = sorted([c for c in df.columns if any(x in c for x in ['gold_', 'oil_', 'silver_', 'copper_'])])
+    # 3. SIGNALS (Velocity/MA)
+    prob_cols = [c for c in df.columns if c.endswith('_prob')]
+    for col in prob_cols:
+        base = col.replace('_prob', '')
+        df[f"{base}_velocity"] = df[col].diff().round(2)
+        df[f"{base}_velocity_ma6"] = df[f"{base}_velocity"].rolling(6, min_periods=1).mean().round(2)
+        df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
+
+    # 4. NEAT GROUPING (As Requested)
+    yfinance_core = ['gold_price', 'oil_wti', 'silver', 'copper_price', 'usd_etf', 'vix_index', 'gold_vix', 'real_yield_proxy', 'gold_miners', 'gld_etf_vol', 'treasury_10y']
+    yfinance_ext = [c for c in df.columns if any(x in c for x in ['_high', '_low', '_volume']) and not any(p in c for p in ['gold_', 'oil_', 'fed_', 'recession_'])]
     
-    # Group 2: Polymarket (Probabilities/Orderbook)
-    # Filter for columns that have prefix matching our slugs
-    poly_prefixes = ['gold_', 'oil_', 'fed_', 'recession_']
-    polymarket_cols = sorted([c for c in df.columns if any(c.startswith(p) for p in poly_prefixes) and c not in yfinance_main])
+    poly_list = sorted([c for c in df.columns if any(c.startswith(p) for p in ['gold_', 'oil_', 'fed_', 'recession_']) and c not in yfinance_core + yfinance_ext])
     
-    # Group 3: All Sentiments & Macro (BTC, SKEW, ITA, USD, FRED)
-    sentiment_macro = sorted([c for c in df.columns if any(x in c for x in ['btc_', 'skew', 'geopol_', 'usd_', 'vix', 'treasury_', 'inflation_', 'yield_', 'real_', 'fed_balance', 'credit_']) and c not in yfinance_main + polymarket_cols])
+    macro_sent = ['btc_sentiment', 'geopol_ita', 'skew_index', 'eastern_bid', 'inflation_expectation', 'yield_curve_spread', 'real_yield_10y', 'fed_balance_sheet', 'credit_stress_spread', 'usd_global_confidence', 'usd_sentiment_index']
     
-    # Re-order final
-    ordered = ['date'] + yfinance_main + polymarket_cols + sentiment_macro
-    # Add any columns missed (edge cases)
-    missed = [c for c in df.columns if c not in ordered]
-    df = df[ordered + missed]
-    
+    # Define Final Order
+    final_cols = ['date'] + yfinance_core + yfinance_ext + poly_list + macro_sent
+    # Filter to only existing columns and maintain order
+    df = df[[c for c in final_cols if c in df.columns]]
+
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 MASTER PULSE COMPLETE. Columns Grouped Neatly.")
+    logging.info(f"🏁 Update Complete. Gaps filled and columns neatly sorted.")
 
 if __name__ == "__main__": main()
