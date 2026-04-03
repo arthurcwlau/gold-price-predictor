@@ -2,20 +2,19 @@ name: Gold Pro Intelligence Pulse
 
 on:
   schedule:
-    - cron: '0 * * * *' # Runs exactly at the start of every hour
-  workflow_dispatch:   # Allows you to trigger it manually for testing
+    - cron: '0 * * * *' # Every hour
+  workflow_dispatch:   # Manual trigger
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Gives the bot permission to save the CSV
-    
+      contents: write
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches full history for smoother syncing
+          fetch-depth: 0 
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -24,7 +23,6 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        # Added numpy for the technical indicator engine
         run: pip install pandas yfinance --upgrade requests numpy
 
       - name: Run Analytics
@@ -32,19 +30,11 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
 
-      - name: Commit and Push Results
+      - name: Commit Results
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          
-          # Add the updated file
           git add gold_investment_pro.csv
-          
-          # Commit locally
-          git commit -m "📊 Hourly Master Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
-          
-          # Pull any remote changes and put our new data on top (Rebase)
+          git commit -m "📊 Intelligence Pulse (Master Build): $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
           git pull --rebase origin main
-          
-          # Push back to GitHub
           git push origin main
