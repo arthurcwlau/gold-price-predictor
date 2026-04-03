@@ -31,6 +31,6 @@ jobs:
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
           git add gold_investment_pro.csv
-          git commit -m "📊 Neat Intelligence Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
+          git commit -m "📊 Intelligence Unification: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
           git pull --rebase origin main
           git push origin main
