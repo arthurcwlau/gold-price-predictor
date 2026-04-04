@@ -16,7 +16,7 @@ def generate_unified_backtest(file_name="gold_investment_pro.csv"):
     plt.rcParams['axes.facecolor'] = '#121212'
     plt.rcParams['grid.color'] = '#222222'
 
-    # 2. Load and Clean Data
+    # 2. Load and Prepare Data
     df = pd.read_csv(file_name)
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').set_index('date').copy()
@@ -33,13 +33,11 @@ def generate_unified_backtest(file_name="gold_investment_pro.csv"):
     fig.patch.set_facecolor('#121212')
 
     # --- THE NORMALIZATION KEY ---
-    # Since predictions are ~$2700 and price is ~$2400, we anchor them together 
-    # at the start of the data so we can see the relative "lead/lag" moves.
+    # Anchor sentiment to the gold price at the start of the data
     offset = df_h['fair_value'].iloc[0] - df_h['gold_price'].iloc[0]
 
     # Plot Sentiment Leads (Thin lines)
     for h in horizons:
-        # Shift the sentiment and subtract the offset to overlap with the gold line
         normalized_lead = df_h['fair_value'].shift(h) - offset
         ax.plot(df_h.index, normalized_lead, label=f'{h}h Lead Sentiment', 
                 color=colors[h], lw=1.2, alpha=0.7)
@@ -62,7 +60,7 @@ def generate_unified_backtest(file_name="gold_investment_pro.csv"):
     ax.tick_params(colors='white', which='both')
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
     
-    # Shade Market Closures (Good Friday / Weekends)
+    # Shade Market Closures
     is_weekend = (df_h.index.weekday >= 5) | \
                  ((df_h.index.weekday == 4) & (df_h.index.hour >= 17)) | \
                  ((df_h.index.weekday == 6) & (df_h.index.hour < 18))
@@ -78,4 +76,5 @@ def generate_unified_backtest(file_name="gold_investment_pro.csv"):
     print("🏁 SUCCESS: Unified one-graph chart generated.")
 
 if __name__ == "__main__":
-    generate_unified_chart()
+    # Corrected function call:
+    generate_unified_backtest()
