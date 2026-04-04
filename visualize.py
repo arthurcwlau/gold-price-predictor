@@ -92,4 +92,16 @@ def generate_split_axis_backtest(file_name="gold_investment_pro.csv"):
     # Labels and Legend
     ax_top.set_title("Tactical Split-Axis: Lead Predictions (Top) vs. Spot Price (Bottom)", fontsize=16, pad=20)
     ax_bot.set_ylabel("Actual Price", color='#FFD700', fontweight='bold')
-    ax_top.set_ylabel("Sentiment Prediction", color='#00BFFF', fontweight='bold
+    ax_top.set_ylabel("Sentiment Prediction", color='#00BFFF', fontweight='bold')
+    
+    # Combined legend
+    lines_t, labels_t = ax_top.get_legend_handles_labels()
+    lines_b, labels_b = ax_bot.get_legend_handles_labels()
+    ax_bot.legend(lines_t + lines_b, labels_t + labels_b, loc='lower center', bbox_to_anchor=(0.5, -0.2), ncol=4)
+
+    ax_bot.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+    plt.savefig("gold_multi_horizon_backtest.png", dpi=300, bbox_inches='tight')
+    print("🏁 Split-axis precision chart generated.")
+
+if __name__ == "__main__":
+    generate_split_axis_backtest()
