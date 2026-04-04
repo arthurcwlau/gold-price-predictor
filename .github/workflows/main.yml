@@ -15,22 +15,32 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
+
       - name: Install Dependencies
-        run: pip install pandas yfinance --upgrade requests numpy
+        # Added plotly and kaleido for the new visual engine
+        run: pip install pandas yfinance requests numpy plotly kaleido --upgrade
+
       - name: Run Analytics
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
+
+      - name: Generate Plotly Visuals
+        # This step runs your new Plotly-based script
+        run: python visualize.py
+
       - name: Commit and Push Results
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          git add gold_investment_pro.csv
-          git commit -m "📊 Master Unification: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
+          # Added *.png to ensure the new charts are caught
+          git add gold_investment_pro.csv *.png
+          git commit -m "📊 Intelligence Pulse: $(date +'%Y-%m-%d %H:00') Z" || echo "No changes"
           git pull --rebase origin main
           git push origin main
