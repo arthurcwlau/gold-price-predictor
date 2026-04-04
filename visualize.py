@@ -80,3 +80,6 @@ def generate_normalized_overlay(file_name="gold_investment_pro.csv"):
     plt.tight_layout()
     plt.savefig("gold_multi_horizon_backtest.png", dpi=300, facecolor=fig.get_facecolor())
     print("🏁 Combined-axis normalized chart generated.")
+
+if __name__ == "__main__":
+    generate_normalized_overlay()
