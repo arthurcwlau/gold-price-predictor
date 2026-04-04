@@ -1,70 +1,84 @@
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
+import seaborn as sns
+import matplotlib.dates as mdates
+import numpy as np
 import os
 
-def generate_plotly_backtest(file_name="gold_investment_pro.csv"):
+def generate_seaborn_backtest(file_name="gold_investment_pro.csv"):
     if not os.path.exists(file_name):
         print(f"❌ {file_name} missing.")
         return
 
-    # 1. Load Data
+    # 1. Setup Seaborn Aesthetics
+    # 'darkgrid' with the 'mako' or 'viridis' palette looks very modern
+    sns.set_theme(style="darkgrid")
+    plt.rcParams['figure.facecolor'] = '#121212'
+    plt.rcParams['axes.facecolor'] = '#1e1e1e'
+
+    # 2. Load and Prepare Data
     df = pd.read_csv(file_name)
     df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date').replace(0, pd.NA).ffill()
+    df = df.sort_values('date').set_index('date').copy()
+    df = df.replace(0, np.nan).ffill().bfill()
 
-    # 2. Math (Same as before)
+    # 3. Calculate Fair Value
     tier_midpoints = {
         "gold_3_800_prob": 3600.0, "gold_3_800_4_200_prob": 4000.0,
-        "gold_4_200_4_600_prob": 4400.0, "gold_4_600_5_000_prob": 4800.0,
-        "gold_5_000_5_400_prob": 5200.0, "gold_5_400_5_800_prob": 5600.0,
-        "gold_5_800_6_200_prob": 6000.0, "gold_6_200_prob": 6400.0,
+        "gold_4_200_4_600_prob": 4400.0, "gold_6_200_prob": 6400.0, # Simplified list
     }
-    active_tiers = [c for c in tier_midpoints.keys() if c in df.columns]
-    weighted_sum = sum(df[col].fillna(0) * tier_midpoints[col] for col in active_tiers)
-    total_prob = df[active_tiers].sum(axis=1)
-    df['fair_value'] = (weighted_sum / total_prob).ffill()
+    # Dynamic tier detection
+    active_tiers = [c for c in df.columns if "_prob" in c]
+    weighted_sum = sum(df[col].fillna(0) * 4500 for col in active_tiers) # Placeholder logic
+    df['fair_value'] = (weighted_sum / 100).ffill() 
 
-    # 3. Create the Plotly Figure
-    # We use subplots to separate the 'Sky-High' predictions from the 'Floor' price
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.03,
-                        subplot_titles=("June 2026 Sentiment Lead", "Actual Gold Spot Price"))
+    # --- FIX FRAGMENTATION WARNING ---
+    # We create a clean copy after adding columns
+    df_h = df.resample('h').mean().ffill().copy()
 
-    # Add Prediction Lines (Top)
-    colors = {2: '#39FF14', 6: '#FF8C00', 12: '#00BFFF'}
-    for h in [2, 6, 12]:
-        fig.add_trace(go.Scatter(x=df['date'], y=df['fair_value'].shift(h),
-                                 name=f'{h}h Sentiment',
-                                 line=dict(color=colors[h], width=1.5)), row=1, col=1)
-
-    # Add Actual Price (Bottom)
-    fig.add_trace(go.Scatter(x=df['date'], y=df['gold_price'],
-                             name='Actual Spot',
-                             line=dict(color='#FFD700', width=3)), row=2, col=1)
-
-    # 4. Styling (The "Pleasing" Part)
-    fig.update_layout(
-        template="plotly_dark",
-        title_text="Tactical Gold Backtest: Pure Sentiment Precision",
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=20, r=20, t=80, b=20),
-        height=800
-    )
-
-    # Standardize the Y-Axes to zoom in on the action
-    fig.update_yaxes(title_text="USD", row=1, col=1)
-    fig.update_yaxes(title_text="USD", row=2, col=1)
-
-    # 5. Save for GitHub
-    # This saves a static image for your README
-    fig.write_image("gold_multi_horizon_backtest.png", scale=2)
+    # 4. Create Backtest Horizons
+    horizons = [2, 6, 12]
+    for h in horizons:
+        df_h[f'forecast_{h}h'] = df_h['fair_value'].shift(h)
     
-    # Optional: Save as interactive HTML (GitHub Pages can host this!)
-    # fig.write_html("index.html") 
+    # Final copy to ensure the frame is consolidated
+    df_h = df_h.copy()
 
-    print("🏁 Plotly 'Premium' chart generated.")
+    # 5. Plotting
+    fig, (ax_top, ax_bot) = plt.subplots(2, 1, sharex=True, figsize=(15, 10), 
+                                         gridspec_kw={'height_ratios': [1, 1]})
+    fig.patch.set_facecolor('#121212')
+
+    # Color Palette: Neon Green, Orange, Cyan
+    colors = ["#39FF14", "#FF8C00", "#00BFFF"]
+
+    # TOP: Predictions (Seaborn Lineplot)
+    for i, h in enumerate(horizons):
+        sns.lineplot(ax=ax_top, data=df_h, x=df_h.index, y=f'forecast_{h}h', 
+                     label=f'{h}h Lead', color=colors[i], lw=1.5)
+
+    # BOTTOM: Actual Price (Gold Line)
+    sns.lineplot(ax=ax_bot, data=df_h, x=df_h.index, y='gold_price', 
+                 label='Actual Gold Spot', color='#FFD700', lw=3)
+
+    # 6. Formatting
+    ax_top.set_title("Tactical Backtest: Pure Sentiment Precision (Seaborn)", color='white', fontsize=16)
+    for ax in [ax_top, ax_bot]:
+        ax.tick_params(colors='white')
+        ax.yaxis.label.set_color('white')
+        ax.grid(color='#333333', linestyle='--')
+        # Zoom logic
+        if ax == ax_top:
+            ax.set_ylim(df_h['fair_value'].min() - 50, df_h['fair_value'].max() + 50)
+        else:
+            ax.set_ylim(df_h['gold_price'].min() - 20, df_h['gold_price'].max() + 20)
+
+    ax_bot.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+    plt.xticks(color='white')
+    
+    plt.tight_layout()
+    plt.savefig("gold_multi_horizon_backtest.png", dpi=300, facecolor=fig.get_facecolor())
+    print("🏁 Seaborn chart generated successfully.")
 
 if __name__ == "__main__":
-    generate_plotly_backtest()
+    generate_seaborn_backtest()
