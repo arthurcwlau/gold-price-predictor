@@ -1,0 +1,34 @@
+name: Gold Strategy Visualization
+
+on:
+  workflow_dispatch: # This creates the "Manual Run" button
+
+jobs:
+  visualize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Allows the bot to save and push the new charts
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        # Add any extra libraries your visualization uses (e.g., matplotlib, plotly)
+        run: pip install pandas matplotlib plotly seaborn
+
+      - name: Generate Charts
+        run: python visualize.py
+
+      - name: Commit and Push Charts
+        run: |
+          git config --global user.name "Gold-Pro-Bot"
+          git config --global user.email "bot@github.com"
+          git add *.png || echo "No new images" # Adjust if you save as .jpg or .html
+          git commit -m "📈 Manual Visualization Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
+          git push
