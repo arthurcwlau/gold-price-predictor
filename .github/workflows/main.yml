@@ -23,7 +23,8 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install pandas yfinance requests numpy seaborn matplotlib --upgrade
+        # Added matplotlib and seaborn here to fix the ModuleNotFoundError
+        run: pip install pandas yfinance requests numpy matplotlib seaborn plotly kaleido --upgrade
 
       - name: Run Analytics
         env:
@@ -31,6 +32,7 @@ jobs:
         run: python main.py
 
       - name: Generate Visuals
+        # Runs your split-axis visualization
         run: python visualize.py
 
       - name: Commit and Push Results
@@ -38,6 +40,6 @@ jobs:
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
           git add gold_investment_pro.csv *.png
-          git commit -m "📊 Core Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
+          git commit -m "📊 Intelligence Pulse: $(date +'%Y-%m-%d %H:00') Z" || echo "No changes"
           git pull --rebase origin main
           git push origin main
