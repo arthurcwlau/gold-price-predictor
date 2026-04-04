@@ -5,7 +5,7 @@ import numpy as np
 import os
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
-def generate_fused_backtest(file_name="gold_investment_pro.csv"):
+def generate_pure_sentiment_split_axis(file_name="gold_investment_pro.csv"):
     if not os.path.exists(file_name):
         print(f"❌ {file_name} missing.")
         return
@@ -14,9 +14,10 @@ def generate_fused_backtest(file_name="gold_investment_pro.csv"):
     df = pd.read_csv(file_name)
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').set_index('date').copy()
+    # Remove zeros and gaps to keep lines smooth
     df = df.replace(0, np.nan).ffill().bfill()
 
-    # 2. Calculate BASE Polymarket Fair Value
+    # 2. Calculate PURE Polymarket Fair Value (No Macro Noise)
     tier_midpoints = {
         "gold_3_800_prob": 3600.0, "gold_3_800_4_200_prob": 4000.0,
         "gold_4_200_4_600_prob": 4400.0, "gold_4_600_5_000_prob": 4800.0,
@@ -26,66 +27,62 @@ def generate_fused_backtest(file_name="gold_investment_pro.csv"):
     active_tiers = [c for c in tier_midpoints.keys() if c in df.columns]
     weighted_sum = sum(df[col].fillna(0) * tier_midpoints[col] for col in active_tiers)
     total_prob = df[active_tiers].sum(axis=1)
-    df['poly_fair_value'] = (weighted_sum / total_prob).ffill()
+    df['fair_value'] = (weighted_sum / total_prob).ffill()
 
-    # 3. FUSION ENGINE: Add External Factors (Confirmations)
-    # We create a 'Macro Multiplier' - Neutral is 1.0
-    macro_multiplier = 1.0
-    
-    # Factor A: US Dollar Index (DXY) - Gold's Enemy
-    if 'dxy_index' in df.columns:
-        # If DXY goes UP, Gold goes DOWN (Inverse relationship)
-        dxy_change = df['dxy_index'].pct_change().fillna(0)
-        macro_multiplier -= (dxy_change * 2.0) # Weight of 2.0x
-        
-    # Factor B: VIX Index - Fear is Gold's Friend
-    if 'vix_index' in df.columns:
-        vix_change = df['vix_index'].pct_change().fillna(0)
-        macro_multiplier += (vix_change * 0.5) # Fear boosts Gold
-
-    # Factor C: News Sentiment (Alpha Vantage / NYT)
-    if 'news_sentiment_score' in df.columns:
-        # Sentiment is usually -1.0 to 1.0. We add a small boost/drag.
-        macro_multiplier += (df['news_sentiment_score'] * 0.05)
-
-    # Calculate FUSED Prediction
-    df['fused_prediction'] = df['poly_fair_value'] * macro_multiplier
-
-    # 4. Backtest Horizons (2h, 6h, 12h)
+    # 3. Backtest Horizons (2h, 6h, 12h)
     horizons = [2, 6, 12]
     for h in horizons:
-        df[f'forecast_{h}h'] = df['fused_prediction'].shift(h)
+        df[f'forecast_{h}h'] = df['fair_value'].shift(h)
 
-    # 5. Resample and Plotting
+    # 4. Market Hours Logic (Shading Gaps)
     df_h = df.resample('h').mean().ffill()
-    is_closed = (df_h.index.weekday >= 5) | (df_h.index.strftime('%Y-%m-%d').isin(['2026-04-03', '2026-04-04']))
+    is_weekend = (df_h.index.weekday >= 5) | \
+                 ((df_h.index.weekday == 4) & (df_h.index.hour >= 17)) | \
+                 ((df_h.index.weekday == 6) & (df_h.index.hour < 18))
+    is_holiday = df_h.index.strftime('%Y-%m-%d').isin(['2026-04-03', '2026-04-04'])
+    is_closed = is_weekend | is_holiday
 
+    # 5. Plotting (Split-Axis Precision)
     plt.style.use('dark_background')
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, sharex=True, figsize=(15, 10), 
                                          gridspec_kw={'height_ratios': [1, 1]})
     fig.subplots_adjust(hspace=0.05)
 
-    # TOP: FUSED PREDICTIONS
+    # --- TOP AXIS: PURE SENTIMENT ---
     colors = {2: '#39FF14', 6: '#FF8C00', 12: '#00BFFF'}
     for h in horizons:
-        ax_top.plot(df_h.index, df_h[f'forecast_{h}h'], label=f'{h}h Fused Lead', 
-                    color=colors[h], lw=1.2)
+        ax_top.plot(df_h.index, df_h[f'forecast_{h}h'], label=f'{h}h Sentiment Lead', 
+                    color=colors[h], lw=1.2, ls='-')
 
-    # BOTTOM: ACTUAL PRICE
+    # --- BOTTOM AXIS: ACTUAL PRICE ---
     ax_bot.plot(df_h.index, df_h['gold_price'], label='Actual Gold Spot', 
                 color='#FFD700', lw=3.5, zorder=10)
 
-    # Styling & Shading
+    # 6. Formatting & Shading
     for ax in [ax_top, ax_bot]:
-        ax.axvspan(df_h.index[is_closed][0], df_h.index[is_closed][-1], color='#1a1a1a', alpha=1.0, zorder=1)
+        closed_indices = df_h.index[is_closed]
+        if not closed_indices.empty:
+            diff = pd.Series(closed_indices).diff() > pd.Timedelta(hours=1)
+            for _, group in pd.Series(closed_indices).groupby(diff.cumsum()):
+                ax.axvspan(group.iloc[0], group.iloc[-1], color='#1a1a1a', alpha=1.0, zorder=1)
         ax.grid(alpha=0.1)
 
-    ax_top.set_title("Multi-Factor Fusion: Sentiment + Macro (DXY/VIX/News)", fontsize=16, pad=20)
-    ax_bot.set_ylim(df_h['gold_price'].min() - 20, df_h['gold_price'].max() + 20)
+    # Precision Zooming
+    ax_top.set_ylim(df_h['fair_value'].min() - 30, df_h['fair_value'].max() + 30)
+    ax_bot.set_ylim(df_h['gold_price'].min() - 15, df_h['gold_price'].max() + 15)
+
+    # Broken Axis Styling
+    ax_top.spines['bottom'].set_visible(False)
+    ax_bot.spines['top'].set_visible(False)
+    ax_bot.xaxis.tick_bottom()
+
+    # Titles & Legend
+    ax_top.set_title("Pure Sentiment Backtest: Predictive Lead (Top) vs. Spot Price (Bottom)", fontsize=16, pad=20)
     ax_bot.legend(loc='lower center', bbox_to_anchor=(0.5, -0.2), ncol=4)
 
+    ax_bot.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
     plt.savefig("gold_multi_horizon_backtest.png", dpi=300, bbox_inches='tight')
-    print("🏁 Multi-factor fused chart generated.")
+    print("🏁 Pure sentiment precision chart generated.")
 
 if __name__ == "__main__":
-    generate_fused_backtest()
+    generate_pure_sentiment_split_axis()
