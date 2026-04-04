@@ -31,9 +31,9 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python main.py
 
-      - name: Generate Visuals
+      # -  name: Generate Visuals
         # Runs your split-axis visualization
-        run: python visualize.py
+        # run: python visualize.py
 
       - name: Commit and Push Results
         run: |
