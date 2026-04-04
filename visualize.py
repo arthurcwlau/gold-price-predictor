@@ -19,10 +19,10 @@ def generate_split_axis_backtest(file_name="gold_investment_pro.csv"):
 
     # 2. Calculate Market Fair Value
     tier_midpoints = {
-        "gold_3_800_prob": 3600.0, "gold_3_800_4_200_prob": 3800.0,
-        "gold_4_200_4_600_prob": 4200.0, "gold_4_600_5_000_prob": 4600.0,
-        "gold_5_000_5_400_prob": 5000.0, "gold_5_400_5_800_prob": 5400.0,
-        "gold_5_800_6_200_prob": 5800.0, "gold_6_200_prob": 6200.0,
+        "gold_3_800_prob": 3600.0, "gold_3_800_4_200_prob": 4000.0,
+        "gold_4_200_4_600_prob": 4400.0, "gold_4_600_5_000_prob": 4800.0,
+        "gold_5_000_5_400_prob": 5200.0, "gold_5_400_5_800_prob": 5600.0,
+        "gold_5_800_6_200_prob": 6000.0, "gold_6_200_prob": 6400.0,
     }
     active_tiers = [c for c in tier_midpoints.keys() if c in df.columns]
     weighted_sum = sum(df[col].fillna(0) * tier_midpoints[col] for col in active_tiers)
