@@ -1,4 +1,3 @@
-
 name: Gold Strategy Visualization
 
 on:
@@ -8,10 +7,12 @@ jobs:
   visualize:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Allows the bot to save and push the new charts
+      contents: write 
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # IMPORTANT: Fetches history so rebase works
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -20,8 +21,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        # Add any extra libraries your visualization uses (e.g., matplotlib, plotly)
-        run: pip install pandas matplotlib plotly seaborn
+        run: pip install pandas seaborn matplotlib numpy
 
       - name: Generate Charts
         run: python visualize.py
@@ -30,6 +30,15 @@ jobs:
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          git add *.png || echo "No new images" # Adjust if you save as .jpg or .html
+          
+          # 1. Stage the new chart
+          git add *.png || echo "No new images"
+          
+          # 2. Commit the change
           git commit -m "📈 Manual Visualization Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
-          git push
+          
+          # 3. THE FIX: Pull the latest CSV from the hourly bot first
+          git pull --rebase origin main
+          
+          # 4. Now push everything back
+          git push origin main
