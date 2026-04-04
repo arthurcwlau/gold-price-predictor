@@ -33,7 +33,6 @@ def fetch_fred_data(session, api_key):
     return data
 
 def fetch_yfinance_data():
-    """Captures OHLCV with standardized naming. Gold and Metadata prioritized."""
     tickers = {
         "gold_price": "GC=F", "oil_wti": "CL=F", "silver": "SI=F", 
         "copper_price": "HG=F", "usd_etf": "UUP", "vix_index": "^VIX", 
@@ -51,7 +50,6 @@ def fetch_yfinance_data():
                 data[f"{key}_high"] = round(last_bar['High'], 2)
                 data[f"{key}_low"] = round(last_bar['Low'], 2)
                 
-                # Volume Mapping
                 if key == "usd_etf": data["usd_volume"] = int(last_bar['Volume'])
                 else: data[f"{key}_volume"] = int(last_bar['Volume']) if 'Volume' in h.columns else 0
                 
@@ -71,7 +69,6 @@ def fetch_polymarket_data(session):
                 t = (m.get('groupItemTitle') or m.get('question')).lower()
                 c = re.sub(r'_+', '_', re.sub(r'[^a-z0-9]', '_', t).strip('_'))
                 prefix = f"{p}_{c}"
-                # Force rename long recession names to simple 'recession'
                 if "us_recession" in prefix: prefix = "recession"
                 
                 prices = json.loads(m['outcomePrices']) if isinstance(m['outcomePrices'], str) else m['outcomePrices']
@@ -105,21 +102,28 @@ def main():
     df = df.drop_duplicates('date').sort_values('date')
 
     # --- 🧹 DATA PRUNING ---
-    # Delete dotted clones and the specific redundant columns you requested
     to_delete = [c for c in df.columns if re.search(r'\.\d+$', c) or "us_recession_by_end_of_2026" in c]
-    to_delete += ['copper_high', 'copper_low', 'copper_volume', 'recession_vol_old', 'usd_volume_old']
     df.drop(columns=[c for c in to_delete if c in df.columns], inplace=True, errors='ignore')
 
-    # Indicators (Always calculated on fresh concat)
-    if 'gold_price' in df.columns:
-        df['gold_log_return'] = np.log(df['gold_price'] / df['gold_price'].shift(1)).round(6)
-        if 'gold_price_high' in df.columns and 'gold_price_low' in df.columns:
-             tr = pd.concat([df['gold_price_high'] - df['gold_price_low'], 
-                             abs(df['gold_price_high'] - df['gold_price'].shift(1)), 
-                             abs(df['gold_price_low'] - df['gold_price'].shift(1))], axis=1).max(axis=1)
-             df['gold_atr_14'] = tr.rolling(14, min_periods=1).mean().round(2)
+    # --- ⚖️ REFINED FAIR VALUE CALCULATION ---
+    tier_midpoints = {
+        "gold_under_3_800": 3600, "gold_3_800_4_200": 4000, "gold_4_200_4_600": 4400,
+        "gold_4_600_5_000": 4800, "gold_5_000_5_400": 5200, "gold_5_400_5_800": 5600,
+        "gold_5_800_6_200": 6000, "gold_over_6_200": 6400
+    }
+    
+    # Calculate weighted average based on probabilities
+    weighted_sum = 0
+    total_prob = 0
+    for key, midpoint in tier_midpoints.items():
+        col = f"{key}_prob"
+        if col in df.columns:
+            weighted_sum += df[col].fillna(0) * midpoint
+            total_prob += df[col].fillna(0)
+    
+    df['fair_value'] = (weighted_sum / total_prob).ffill()
 
-    # Probability Signals
+    # Probability Velocity Signals
     prob_cols = [c for c in df.columns if c.endswith('_prob')]
     for col in prob_cols:
         base = col.replace('_prob', '')
@@ -128,17 +132,14 @@ def main():
         df[f"{base}_signal"] = (df[f"{base}_velocity"] > df[f"{base}_velocity_ma6"]).astype(int)
 
     # --- 🏗️ NEAT SORTING ---
-    gold_cols = ['gold_price', 'gold_price_high', 'gold_price_low', 'gold_price_volume']
-    
-    # Polymarket and yfinance anchors
+    gold_cols = ['gold_price', 'gold_price_high', 'gold_price_low', 'gold_price_volume', 'fair_value']
     y_core = sorted([c for c in df.columns if any(x in c for x in ['oil_wti', 'silver', 'copper_price', 'usd_etf', 'usd_volume', 'vix_index', 'treasury_10y', 'btc_sentiment', 'geopol_ita'])])
     p_core = sorted([c for c in df.columns if any(c.startswith(p) for p in ['fed_', 'recession_']) or (c.startswith('gold_') and c not in gold_cols)])
-    
     others = sorted([c for c in df.columns if c not in ['date'] + gold_cols + y_core + p_core])
     
     df = df[['date'] + gold_cols + y_core + p_core + others]
     df['date'] = df['date'].dt.strftime("%Y-%m-%d %H:%M Z")
     df.to_csv(fn, index=False)
-    logging.info(f"🏁 MASTER SORTING COMPLETE. Gold is leftmost.")
+    logging.info(f"🏁 MASTER UNIFICATION COMPLETE.")
 
 if __name__ == "__main__": main()
