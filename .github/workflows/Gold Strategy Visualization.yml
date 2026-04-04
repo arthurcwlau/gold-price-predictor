@@ -1,3 +1,4 @@
+
 name: Gold Strategy Visualization
 
 on:
@@ -11,8 +12,6 @@ jobs:
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Fetches full history for proper rebasing
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -21,8 +20,8 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        # Optimized for Seaborn/Matplotlib reliability
-        run: pip install pandas seaborn matplotlib
+        # Add any extra libraries your visualization uses (e.g., matplotlib, plotly)
+        run: pip install pandas matplotlib plotly seaborn
 
       - name: Generate Charts
         run: python visualize.py
@@ -31,12 +30,6 @@ jobs:
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          
-          # Stage any PNG files generated
-          git add *.png || echo "No new images found"
-          
+          git add *.png || echo "No new images" # Adjust if you save as .jpg or .html
           git commit -m "📈 Manual Visualization Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
-          
-          # Rebase helps prevent push errors if the hourly bot just updated the CSV
-          git pull --rebase origin main
-          git push origin main
+          git push
