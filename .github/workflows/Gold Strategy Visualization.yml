@@ -1,20 +1,18 @@
-name: Gold Pro Intelligence Pulse
+name: Gold Strategy Visualization
 
 on:
-  schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch: # Allows you to run it manually via the Actions tab
+  workflow_dispatch: # This creates the "Manual Run" button
 
 jobs:
-  build:
+  visualize:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Crucial for the bot to save files back to your repo
+      contents: write # Allows the bot to save and push the new charts
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 
+          fetch-depth: 0 # Fetches full history for proper rebasing
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -23,25 +21,22 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        # We use Seaborn and Matplotlib for the visual engine
-        run: |
-          pip install pandas yfinance requests numpy seaborn matplotlib --upgrade
+        # Optimized for Seaborn/Matplotlib reliability
+        run: pip install pandas seaborn matplotlib
 
-      - name: Run Analytics
-        env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: python main.py
-
-      - name: Generate Visuals
-        # This runs the Seaborn visualization script
+      - name: Generate Charts
         run: python visualize.py
 
-      - name: Commit and Push Results
+      - name: Commit and Push Charts
         run: |
           git config --global user.name "Gold-Pro-Bot"
           git config --global user.email "bot@github.com"
-          # This adds the updated CSV and any new PNG charts
-          git add gold_investment_pro.csv *.png
-          git commit -m "📊 Intelligence Pulse: $(date +'%Y-%m-%d %H:00') Z" || echo "No changes"
+          
+          # Stage any PNG files generated
+          git add *.png || echo "No new images found"
+          
+          git commit -m "📈 Manual Visualization Update: $(date +'%Y-%m-%d %H:%M') Z" || echo "No changes"
+          
+          # Rebase helps prevent push errors if the hourly bot just updated the CSV
           git pull --rebase origin main
           git push origin main
