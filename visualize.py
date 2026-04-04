@@ -4,7 +4,7 @@ import matplotlib.dates as mdates
 import numpy as np
 import os
 
-def generate_backtest_report(file_name="gold_investment_pro (40).csv"):
+def generate_backtest_report(file_name="gold_investment_pro.csv"):
     if not os.path.exists(file_name):
         print(f"❌ {file_name} missing.")
         return
@@ -88,7 +88,7 @@ def generate_backtest_report(file_name="gold_investment_pro (40).csv"):
     plt.tight_layout()
     plt.subplots_adjust(right=0.83) # Make room for the dashboard
     
-    plt.savefig("gold_performance_backtest.png", dpi=300)
+    plt.savefig("gold_lag_analysis.png", dpi=300)
     print("📈 Backtest report saved as gold_performance_backtest.png")
 
 if __name__ == "__main__":
